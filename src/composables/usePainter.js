@@ -40,8 +40,12 @@ export function usePainter({
   const ZOOM_BTN_FACTOR = 1.15
   const ZOOM_WHEEL_FACTOR = 1.06
   const HISTORY_MAX = 40
+  const SESSION_STORAGE_KEY = 'kdrawer-session-v1'
 
   const history = []
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let sessionSaveTimer = null
+  let sessionFlushInProgress = false
 
   // ── Reactive state exposed to UI ──────────────────────────────────────────
   const zoomLabel = ref('100%')
@@ -165,6 +169,7 @@ export function usePainter({
     const d = documents.value[activeDocIndex.value]
     if (d) d.zoomScale = zoomScale
     applyCanvasDisplaySize()
+    scheduleSessionPersistence()
   }
 
   // ── Viewport resize ───────────────────────────────────────────────────────
@@ -241,6 +246,7 @@ export function usePainter({
   function undo() {
     if (history.length === 0) return
     restoreSnapshot(history.pop())
+    persistActiveDocument()
   }
 
   // ── Document management ───────────────────────────────────────────────────
@@ -251,6 +257,112 @@ export function usePainter({
   function cloneImageData(src) {
     if (!src || !src.data) return null
     try { return new ImageData(new Uint8ClampedArray(src.data), src.width, src.height) } catch (_) { return null }
+  }
+
+  function imageDataToPngDataURL(idata) {
+    if (!idata || !idata.data) return ''
+    const t = document.createElement('canvas')
+    t.width = idata.width
+    t.height = idata.height
+    const tctx = t.getContext('2d')
+    if (!tctx) return ''
+    tctx.putImageData(idata, 0, 0)
+    try { return t.toDataURL('image/png') } catch (_) { return '' }
+  }
+
+  function pngDataUrlToImageData(dataUrl) {
+    return new Promise(resolve => {
+      if (!dataUrl || typeof dataUrl !== 'string') { resolve(null); return }
+      const img = new Image()
+      img.onload = () => {
+        try {
+          const t = document.createElement('canvas')
+          t.width = img.width
+          t.height = img.height
+          const tctx = t.getContext('2d')
+          if (!tctx) { resolve(null); return }
+          tctx.drawImage(img, 0, 0)
+          resolve(tctx.getImageData(0, 0, t.width, t.height))
+        } catch (_) {
+          resolve(null)
+        }
+      }
+      img.onerror = () => resolve(null)
+      img.src = dataUrl
+    })
+  }
+
+  function scheduleSessionPersistence() {
+    if (typeof sessionStorage === 'undefined') return
+    if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
+    sessionSaveTimer = setTimeout(() => {
+      sessionSaveTimer = null
+      flushSessionPersistence()
+    }, 220)
+  }
+
+  function flushSessionPersistence() {
+    if (typeof sessionStorage === 'undefined') return
+    sessionFlushInProgress = true
+    try {
+      persistActiveDocument()
+      const payload = {
+        v: 1,
+        activeDocIndex: activeDocIndex.value,
+        documents: documents.value.map(d => ({
+          id: d.id,
+          title: d.title,
+          zoomScale: d.zoomScale,
+          useViewportSize: d.useViewportSize,
+          logicalW: d.logicalW,
+          logicalH: d.logicalH,
+          png: d.canvasSnapshot ? imageDataToPngDataURL(d.canvasSnapshot) : null,
+        })),
+      }
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload))
+    } catch (e) {
+      if (e && e.name === 'QuotaExceededError') showToast('自動儲存失敗：內容超過瀏覽器上限')
+    } finally {
+      sessionFlushInProgress = false
+    }
+  }
+
+  function flushSessionPersistenceSync() {
+    if (sessionSaveTimer) {
+      clearTimeout(sessionSaveTimer)
+      sessionSaveTimer = null
+    }
+    flushSessionPersistence()
+  }
+
+  async function tryRestoreSessionFromStorage() {
+    if (typeof sessionStorage === 'undefined') return null
+    try {
+      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (parsed.v !== 1 || !Array.isArray(parsed.documents) || parsed.documents.length === 0) return null
+      const activeIdx = Math.min(Math.max(0, parsed.activeDocIndex | 0), parsed.documents.length - 1)
+      const restored = []
+      for (const row of parsed.documents) {
+        let canvasSnapshot = null
+        if (row.png && typeof row.png === 'string') canvasSnapshot = await pngDataUrlToImageData(row.png)
+        restored.push({
+          id: typeof row.id === 'string' ? row.id : genDocId(),
+          title: typeof row.title === 'string' ? row.title : '分頁',
+          zoomScale: typeof row.zoomScale === 'number' && Number.isFinite(row.zoomScale) ? row.zoomScale : 1,
+          useViewportSize: !!row.useViewportSize,
+          logicalW: row.logicalW,
+          logicalH: row.logicalH,
+          canvasSnapshot,
+          history: [],
+        })
+      }
+      return { documents: restored, activeDocIndex: activeIdx }
+    } catch (_) {
+      try { sessionStorage.removeItem(SESSION_STORAGE_KEY) } catch (__) {}
+      return null
+    }
   }
 
   function fillCanvasWhiteNoHistory() {
@@ -272,6 +384,7 @@ export function usePainter({
     d.logicalH = logicalH.value
     d.canvasSnapshot = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
     d.history = history.map(h => cloneImageData(h)).filter(Boolean)
+    if (!sessionFlushInProgress) scheduleSessionPersistence()
   }
 
   function normalizeDocLogicalSize(d) {
@@ -666,6 +779,7 @@ export function usePainter({
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
     ctx.restore()
+    persistActiveDocument()
   }
 
   function savePng() {
@@ -746,6 +860,10 @@ export function usePainter({
     void applyCanvasSizeFromUserSelect()
   }
 
+  function onSessionVisibilityChange() {
+    if (document.visibilityState === 'hidden') flushSessionPersistenceSync()
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   watch(tool, applyCanvasCursor)
 
@@ -754,133 +872,147 @@ export function usePainter({
     if (!c) return
     ctx = c.getContext('2d', { willReadFrequently: true })
 
-    const avInit = getCanvasWrapAvailPx()
-    documents.value = [{
-      id: genDocId(), title: '分頁 1', zoomScale: 1,
-      useViewportSize: true, logicalW: avInit.w, logicalH: avInit.h,
-      canvasSnapshot: null, history: [],
-    }]
-    activeDocIndex.value = 0
-    logicalW.value = avInit.w; logicalH.value = avInit.h; zoomScale = 1
-    setupHighResCanvas()
-    fillCanvasWhiteNoHistory()
-    persistActiveDocument()
-    syncCanvasSizeSelect()
-    applyCanvasCursor()
-
-    // Canvas events
-    c.addEventListener('contextmenu', e => e.preventDefault())
-    c.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' && e.button === 1) return
-      if (e.pointerType === 'mouse' && e.button === 0 && e.altKey) return
-      c.setPointerCapture(e.pointerId)
-      const { x, y } = clientToCanvas(e.clientX, e.clientY)
-      beginStroke(x, y, e.pointerType === 'mouse' && e.button === 2)
-      e.preventDefault()
-    })
-    c.addEventListener('pointermove', e => {
-      if (!drawing) return
-      const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e]
-      for (const ev of list) {
-        const { x, y } = clientToCanvas(ev.clientX, ev.clientY)
-        drawSegment(x, y)
+    void (async () => {
+      const restored = await tryRestoreSessionFromStorage()
+      if (restored) {
+        documents.value = restored.documents
+        activeDocIndex.value = restored.activeDocIndex
+      } else {
+        const avInit = getCanvasWrapAvailPx()
+        documents.value = [{
+          id: genDocId(), title: '分頁 1', zoomScale: 1,
+          useViewportSize: true, logicalW: avInit.w, logicalH: avInit.h,
+          canvasSnapshot: null, history: [],
+        }]
+        activeDocIndex.value = 0
       }
-      e.preventDefault()
-    })
-    const onPointerUp = e => {
-      try { c.releasePointerCapture(e.pointerId) } catch (_) {}
-      endStroke()
-    }
-    c.addEventListener('pointerup', onPointerUp)
-    c.addEventListener('pointercancel', onPointerUp)
-    c.addEventListener('lostpointercapture', onPointerUp)
 
-    // Wrap events
-    const wrap = canvasWrap()
-    if (wrap) {
-      wrap.addEventListener('pointermove', e => {
-        if (panDrag && e.pointerId === panDrag.pointerId) {
-          panX += e.clientX - panDrag.lastX
-          panY += e.clientY - panDrag.lastY
-          panDrag.lastX = e.clientX; panDrag.lastY = e.clientY
-          syncPanTransform()
-        }
-        updateCursorPt(e.clientX, e.clientY)
-      }, { passive: true })
+      loadDocumentAt(activeDocIndex.value)
+      syncCanvasSizeSelect()
+      applyCanvasDisplaySize()
+      applyCanvasCursor()
 
-      wrap.addEventListener('pointerleave', e => {
-        const rt = e.relatedTarget
-        const footer = appFooter()
-        if (rt && footer && footer.contains(rt)) return
-        cursorPt.value = '—'
-      })
-
-      wrap.addEventListener('pointerdown', e => {
-        if (!wrap.classList.contains('canvas-wrap--pannable')) return
-        const wantPan = e.button === 1 || (e.button === 0 && e.altKey)
-        if (!wantPan || !wrap.contains(e.target)) return
-        e.preventDefault(); e.stopPropagation()
-        try { wrap.setPointerCapture(e.pointerId) } catch (_) {}
-        panDrag = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
-        wrap.classList.add('canvas-wrap--panning')
-      }, true)
-
-      wrap.addEventListener('pointerup', endPanDrag)
-      wrap.addEventListener('pointercancel', endPanDrag)
-      wrap.addEventListener('lostpointercapture', e => { if (panDrag && e.pointerId === panDrag.pointerId) endPanDrag(e) })
-
-      wrap.addEventListener('wheel', e => {
-        if (!wrap.contains(e.target)) return
+      // Canvas events
+      c.addEventListener('contextmenu', e => e.preventDefault())
+      c.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'mouse' && e.button === 1) return
+        if (e.pointerType === 'mouse' && e.button === 0 && e.altKey) return
+        c.setPointerCapture(e.pointerId)
+        const { x, y } = clientToCanvas(e.clientX, e.clientY)
+        beginStroke(x, y, e.pointerType === 'mouse' && e.button === 2)
         e.preventDefault()
-        applyZoomScaleInternal(zoomScale * (e.deltaY < 0 ? ZOOM_WHEEL_FACTOR : 1 / ZOOM_WHEEL_FACTOR))
-      }, { passive: false })
-
-      const pinchDist = tl => tl.length < 2 ? 0 : Math.hypot(tl[0].clientX - tl[1].clientX, tl[0].clientY - tl[1].clientY)
-      wrap.addEventListener('touchstart', e => { if (e.touches.length === 2) { e.preventDefault(); pinchTouchDist = pinchDist(e.touches) } }, { passive: false })
-      wrap.addEventListener('touchmove', e => {
-        if (e.touches.length === 2 && pinchTouchDist > 1) {
-          e.preventDefault()
-          const d = pinchDist(e.touches)
-          applyZoomScaleInternal(zoomScale * Math.min(1.12, Math.max(1 / 1.12, d / pinchTouchDist)))
-          pinchTouchDist = d
+      })
+      c.addEventListener('pointermove', e => {
+        if (!drawing) return
+        const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e]
+        for (const ev of list) {
+          const { x, y } = clientToCanvas(ev.clientX, ev.clientY)
+          drawSegment(x, y)
         }
-      }, { passive: false })
-      wrap.addEventListener('touchend', e => { if (e.touches.length < 2) pinchTouchDist = 0 })
-      wrap.addEventListener('touchcancel', () => { pinchTouchDist = 0 })
-      wrap.addEventListener('gesturestart', e => e.preventDefault(), { passive: false })
-      wrap.addEventListener('gesturechange', e => e.preventDefault(), { passive: false })
-      wrap.addEventListener('gestureend', e => e.preventDefault(), { passive: false })
-
-      if (typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(() => scheduleViewportLogicalSync()).observe(wrap)
+        e.preventDefault()
+      })
+      const onPointerUp = e => {
+        try { c.releasePointerCapture(e.pointerId) } catch (_) {}
+        endStroke()
+        persistActiveDocument()
       }
-    }
+      c.addEventListener('pointerup', onPointerUp)
+      c.addEventListener('pointercancel', onPointerUp)
+      c.addEventListener('lostpointercapture', onPointerUp)
 
-    // Footer hover
-    const footer = appFooter()
-    if (footer) {
-      footer.addEventListener('pointerenter', () => footer.classList.add('app-footer--hover'))
-      footer.addEventListener('pointerleave', () => footer.classList.remove('app-footer--hover'))
-    }
+      // Wrap events
+      const wrap = canvasWrap()
+      if (wrap) {
+        wrap.addEventListener('pointermove', e => {
+          if (panDrag && e.pointerId === panDrag.pointerId) {
+            panX += e.clientX - panDrag.lastX
+            panY += e.clientY - panDrag.lastY
+            panDrag.lastX = e.clientX; panDrag.lastY = e.clientY
+            syncPanTransform()
+          }
+          updateCursorPt(e.clientX, e.clientY)
+        }, { passive: true })
 
-    // Keyboard shortcuts
-    keydownHandler = e => {
-      const tag = e.target && e.target.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION') return
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
-      if ((e.ctrlKey || e.metaKey) && (e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); applyZoomScaleInternal(1) }
-      if (e.ctrlKey || e.metaKey) {
-        if (e.code === 'Equal' || e.code === 'NumpadAdd') { e.preventDefault(); applyZoomScaleInternal(zoomScale * ZOOM_BTN_FACTOR) }
-        else if (e.code === 'Minus' || e.code === 'NumpadSubtract') { e.preventDefault(); applyZoomScaleInternal(zoomScale / ZOOM_BTN_FACTOR) }
+        wrap.addEventListener('pointerleave', e => {
+          const rt = e.relatedTarget
+          const footer = appFooter()
+          if (rt && footer && footer.contains(rt)) return
+          cursorPt.value = '—'
+        })
+
+        wrap.addEventListener('pointerdown', e => {
+          if (!wrap.classList.contains('canvas-wrap--pannable')) return
+          const wantPan = e.button === 1 || (e.button === 0 && e.altKey)
+          if (!wantPan || !wrap.contains(e.target)) return
+          e.preventDefault(); e.stopPropagation()
+          try { wrap.setPointerCapture(e.pointerId) } catch (_) {}
+          panDrag = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
+          wrap.classList.add('canvas-wrap--panning')
+        }, true)
+
+        wrap.addEventListener('pointerup', endPanDrag)
+        wrap.addEventListener('pointercancel', endPanDrag)
+        wrap.addEventListener('lostpointercapture', e => { if (panDrag && e.pointerId === panDrag.pointerId) endPanDrag(e) })
+
+        wrap.addEventListener('wheel', e => {
+          if (!wrap.contains(e.target)) return
+          e.preventDefault()
+          applyZoomScaleInternal(zoomScale * (e.deltaY < 0 ? ZOOM_WHEEL_FACTOR : 1 / ZOOM_WHEEL_FACTOR))
+        }, { passive: false })
+
+        const pinchDist = tl => tl.length < 2 ? 0 : Math.hypot(tl[0].clientX - tl[1].clientX, tl[0].clientY - tl[1].clientY)
+        wrap.addEventListener('touchstart', e => { if (e.touches.length === 2) { e.preventDefault(); pinchTouchDist = pinchDist(e.touches) } }, { passive: false })
+        wrap.addEventListener('touchmove', e => {
+          if (e.touches.length === 2 && pinchTouchDist > 1) {
+            e.preventDefault()
+            const d = pinchDist(e.touches)
+            applyZoomScaleInternal(zoomScale * Math.min(1.12, Math.max(1 / 1.12, d / pinchTouchDist)))
+            pinchTouchDist = d
+          }
+        }, { passive: false })
+        wrap.addEventListener('touchend', e => { if (e.touches.length < 2) pinchTouchDist = 0 })
+        wrap.addEventListener('touchcancel', () => { pinchTouchDist = 0 })
+        wrap.addEventListener('gesturestart', e => e.preventDefault(), { passive: false })
+        wrap.addEventListener('gesturechange', e => e.preventDefault(), { passive: false })
+        wrap.addEventListener('gestureend', e => e.preventDefault(), { passive: false })
+
+        if (typeof ResizeObserver !== 'undefined') {
+          new ResizeObserver(() => scheduleViewportLogicalSync()).observe(wrap)
+        }
       }
-    }
-    document.addEventListener('keydown', keydownHandler)
 
-    window.addEventListener('resize', scheduleViewportLogicalSync)
-    requestAnimationFrame(() => scheduleViewportLogicalSync())
+      // Footer hover
+      const footer = appFooter()
+      if (footer) {
+        footer.addEventListener('pointerenter', () => footer.classList.add('app-footer--hover'))
+        footer.addEventListener('pointerleave', () => footer.classList.remove('app-footer--hover'))
+      }
+
+      // Keyboard shortcuts
+      keydownHandler = e => {
+        const tag = e.target && e.target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION') return
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
+        if ((e.ctrlKey || e.metaKey) && (e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); applyZoomScaleInternal(1) }
+        if (e.ctrlKey || e.metaKey) {
+          if (e.code === 'Equal' || e.code === 'NumpadAdd') { e.preventDefault(); applyZoomScaleInternal(zoomScale * ZOOM_BTN_FACTOR) }
+          else if (e.code === 'Minus' || e.code === 'NumpadSubtract') { e.preventDefault(); applyZoomScaleInternal(zoomScale / ZOOM_BTN_FACTOR) }
+        }
+      }
+      document.addEventListener('keydown', keydownHandler)
+
+      window.addEventListener('resize', scheduleViewportLogicalSync)
+      document.addEventListener('visibilitychange', onSessionVisibilityChange)
+      window.addEventListener('pagehide', flushSessionPersistenceSync)
+      requestAnimationFrame(() => scheduleViewportLogicalSync())
+      flushSessionPersistenceSync()
+    })()
   })
 
   onUnmounted(() => {
+    flushSessionPersistenceSync()
+    document.removeEventListener('visibilitychange', onSessionVisibilityChange)
+    window.removeEventListener('pagehide', flushSessionPersistenceSync)
     window.removeEventListener('resize', scheduleViewportLogicalSync)
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler)
     if (viewportSyncRaf !== null) cancelAnimationFrame(viewportSyncRaf)
