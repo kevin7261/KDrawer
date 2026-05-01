@@ -9,6 +9,7 @@
   const clearBtn = document.getElementById("clear");
   const saveBtn = document.getElementById("save");
   const copyPngBtn = document.getElementById("copyPng");
+  const copyPngDrawnBtn = document.getElementById("copyPngDrawn");
   const canvasWrap = document.getElementById("canvasWrap");
   const appFooter = document.getElementById("appFooter");
   const canvasPanLayer = document.getElementById("canvasPanLayer");
@@ -957,6 +958,91 @@
     }
   }
 
+  /**
+   * 與 fillCanvasWhiteNoHistory／清空相同：視為「未繪製」的像素（RGB 255,255,255 不透明）。
+   * @param {ImageData} imageData
+   * @returns {{ minX: number; minY: number; maxX: number; maxY: number } | null}
+   */
+  function getDrawnPixelBounds(imageData) {
+    const w = imageData.width;
+    const h = imageData.height;
+    const d = imageData.data;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w * 4;
+      for (let x = 0; x < w; x++) {
+        const i = row + x * 4;
+        if (d[i] !== 255 || d[i + 1] !== 255 || d[i + 2] !== 255 || d[i + 3] !== 255) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    return { minX, minY, maxX, maxY };
+  }
+
+  /** 僅複製非留白區域的 PNG（與 copyCanvasPng 分開，不改既有行為） */
+  async function copyCanvasPngDrawnBounds() {
+    if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
+      showToast("此環境不支援複製圖片到剪貼簿");
+      return;
+    }
+    let img;
+    try {
+      img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    } catch (_) {
+      showToast("無法讀取畫布像素");
+      return;
+    }
+    const b = getDrawnPixelBounds(img);
+    if (!b) {
+      showToast("目前沒有繪製內容（全為留白）");
+      return;
+    }
+    const pad = 1;
+    const minX = Math.max(0, b.minX - pad);
+    const minY = Math.max(0, b.minY - pad);
+    const maxX = Math.min(canvas.width - 1, b.maxX + pad);
+    const maxY = Math.min(canvas.height - 1, b.maxY + pad);
+    const cw = maxX - minX + 1;
+    const ch = maxY - minY + 1;
+    let crop;
+    try {
+      crop = ctx.getImageData(minX, minY, cw, ch);
+    } catch (_) {
+      showToast("無法讀取繪製範圍");
+      return;
+    }
+    const tmp = document.createElement("canvas");
+    tmp.width = cw;
+    tmp.height = ch;
+    const tctx = tmp.getContext("2d");
+    if (!tctx) {
+      showToast("無法建立裁切畫布");
+      return;
+    }
+    tctx.putImageData(crop, 0, 0);
+    try {
+      const blob = await new Promise((resolve, reject) => {
+        tmp.toBlob((bl) => (bl ? resolve(bl) : reject(new Error("toBlob"))), "image/png", 1);
+      });
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      const dprX = canvas.width / logicalW || 1;
+      const dprY = canvas.height / logicalH || 1;
+      const lw = Math.round(cw / dprX);
+      const lh = Math.round(ch / dprY);
+      showToast("已複製繪製範圍 PNG（" + lw + "×" + lh + "）");
+    } catch (_) {
+      showToast("複製失敗：請使用 HTTPS，或檢查剪貼簿權限");
+    }
+  }
+
   const avInit = getCanvasWrapAvailPx();
   documents = [
     {
@@ -1046,6 +1132,11 @@
   if (copyPngBtn) {
     copyPngBtn.addEventListener("click", () => {
       copyCanvasPng();
+    });
+  }
+  if (copyPngDrawnBtn) {
+    copyPngDrawnBtn.addEventListener("click", () => {
+      void copyCanvasPngDrawnBounds();
     });
   }
 
