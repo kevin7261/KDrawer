@@ -7,54 +7,47 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=Noto+Sans+TC:wght@400;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="app">
-    <header class="control-bar" aria-label="控制列">
-      <!-- 小畫家／Office 慣例：剪貼簿與檔案在左 -->
-      <div class="control-bar__group control-bar__clipboard" role="group" aria-label="剪貼簿與檔案">
-        <button type="button" class="ctrl-action" id="undo" title="復原（Ctrl+Z）" aria-label="復原"><i data-lucide="undo-2"></i></button>
-        <button type="button" class="ctrl-action ctrl-action--accent" id="copyPng" title="複製目前畫布為 PNG" aria-label="複製 PNG"><i data-lucide="clipboard-copy"></i></button>
-        <button type="button" class="ctrl-action ctrl-action--accent" id="save" title="下載 PNG" aria-label="另存新檔"><i data-lucide="download"></i></button>
-        <button type="button" class="ctrl-action ctrl-action--danger" id="clear" title="清空此分頁畫布（全白，可復原）" aria-label="清空畫布"><i data-lucide="trash-2"></i></button>
+    <header class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100" aria-label="控制列">
+      <div class="btn-group btn-group-sm" role="group" aria-label="剪貼簿與檔案">
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action btn-icon-tiny" id="undo" aria-label="復原"><i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny" id="copyPng" aria-label="複製 PNG"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny" id="save" aria-label="另存新檔"><i class="fa-solid fa-download" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger btn-icon-tiny" id="clear" aria-label="清空畫布"><i class="fa-solid fa-trash-can" aria-hidden="true"></i></button>
       </div>
 
-      <div class="control-bar__sep" role="presentation"></div>
+      <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
 
-      <!-- 工具箱順序（傳統小畫家左欄→右欄、由上而下改為左→右） -->
-      <nav class="control-bar__tools" role="toolbar" aria-label="繪圖工具">
-        <button type="button" class="ctrl-tool" data-tool="eraser" title="橡皮擦（背景色）" aria-label="橡皮擦"><i data-lucide="eraser"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="fill" title="填滿" aria-label="填滿"><i data-lucide="paint-bucket"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="pick" title="滴管" aria-label="滴管"><i data-lucide="pipette"></i></button>
-        <button type="button" class="ctrl-tool active" data-tool="pencil" title="鉛筆" aria-label="鉛筆"><i data-lucide="pencil"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="pen" title="筆刷" aria-label="筆刷"><i data-lucide="paintbrush"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="line" title="直線" aria-label="直線"><i data-lucide="slash"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="rect" title="矩形" aria-label="矩形"><i data-lucide="square"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="ellipse" title="橢圓" aria-label="橢圓"><i data-lucide="circle"></i></button>
-        <button type="button" class="ctrl-tool" data-tool="roundrect" title="圓角矩形" aria-label="圓角矩形"><i data-lucide="square-round-corner"></i></button>
+      <nav class="control-bar__tools kd-tool-well d-flex flex-wrap flex-shrink-0 align-items-center" role="toolbar" aria-label="繪圖工具">
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="eraser" aria-label="橡皮擦"><i class="fa-solid fa-eraser" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="fill" aria-label="填滿"><i class="fa-solid fa-fill-drip" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="pick" aria-label="滴管"><i class="fa-solid fa-eye-dropper" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny active" data-tool="pencil" aria-label="鉛筆"><i class="fa-solid fa-pencil" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="pen" aria-label="筆刷"><i class="fa-solid fa-paintbrush" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="line" aria-label="直線"><i class="fa-solid fa-slash" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="rect" aria-label="矩形"><i class="fa-regular fa-square" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="ellipse" aria-label="橢圓"><i class="fa-regular fa-circle" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-tool btn-icon-tiny" data-tool="roundrect" aria-label="圓角矩形"><i class="fa-solid fa-vector-square" aria-hidden="true"></i></button>
       </nav>
 
-      <div class="control-bar__sep" role="presentation"></div>
+      <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
 
-      <div class="control-bar__zoom" role="group" aria-label="畫布縮放">
-        <button type="button" class="ctrl-zoom-btn" id="zoomOutBtn" title="縮小" aria-label="縮小"><i data-lucide="zoom-out"></i></button>
-        <button type="button" class="ctrl-zoom-label" id="zoomLabel" title="重設為 100%（Ctrl+0 或 ⌘0）" aria-label="縮放比例，點擊重設">100%</button>
-        <button type="button" class="ctrl-zoom-btn" id="zoomInBtn" title="放大" aria-label="放大"><i data-lucide="zoom-in"></i></button>
+      <div class="btn-group btn-group-sm ctrl-zoom-group" role="group" aria-label="畫布縮放">
+        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny" id="zoomOutBtn" aria-label="縮小"><i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm ctrl-zoom-label ctrl-zoom-readout px-2 text-nowrap" id="zoomLabel" aria-label="縮放比例，點擊重設">100%</button>
+        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny" id="zoomInBtn" aria-label="放大"><i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i></button>
       </div>
 
-      <div class="control-bar__sep" role="presentation"></div>
+      <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
 
-      <div class="control-bar__cursor" role="status" aria-live="polite" aria-label="游標在畫布上的位置（pt）">
-        <span class="canvas-size-label">游標</span>
-        <span id="cursorPt" class="control-bar__cursor-val">—</span>
-      </div>
-
-      <div class="control-bar__sep" role="presentation"></div>
-
-      <div class="control-bar__canvas-size" role="group" aria-label="畫布大小">
-        <label class="canvas-size-label" for="canvasSizePreset">畫布</label>
-        <select id="canvasSizePreset" class="ctrl-select" title="「跟隨視窗」以目前畫布區大小為像素尺寸；選固定分辨率會清除並重設復原">
+      <div class="d-flex flex-shrink-0 align-items-center gap-2 kd-field" role="group" aria-label="畫布大小">
+        <label class="form-label kd-label mb-0 text-nowrap" for="canvasSizePreset">畫布</label>
+        <select id="canvasSizePreset" class="form-select form-select-sm ctrl-select-on-dark kd-select" aria-label="畫布像素尺寸">
           <option value="viewport" selected>跟隨視窗</option>
           <option value="2560x1440">2560 × 1440</option>
           <option value="1920x1080">1920 × 1080</option>
@@ -67,48 +60,83 @@
         </select>
       </div>
 
-      <div class="control-bar__sep" role="presentation"></div>
+      <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
 
-      <!-- 筆觸大小（對應小畫家「大小」） -->
-      <div class="control-bar__brush" role="group" aria-label="筆觸大小">
-        <label class="brush-label" for="brushSize"><span>大小</span> <strong id="brushSizeVal">4</strong>px</label>
-        <input type="range" id="brushSize" min="1" max="48" value="4" />
+      <div class="d-flex flex-shrink-0 align-items-center gap-2 kd-field" role="group" aria-label="筆觸大小">
+        <label class="form-label kd-label mb-0 text-nowrap" for="brushSize"><span>大小</span> <strong id="brushSizeVal" class="kd-brush-val">4</strong>px</label>
+        <input type="range" class="form-range brush-range" id="brushSize" min="1" max="48" value="4" aria-label="筆觸大小" />
       </div>
 
-      <div class="control-bar__sep" role="presentation"></div>
+      <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
 
-      <!-- 色彩在右（小畫家／Adobe 皆將色票置於工具列末端） -->
-      <div class="control-bar__palette" role="group" aria-label="色彩">
-        <div class="color-overlap-wrap" title="點選編輯前景或背景色">
+      <div class="control-bar__palette d-flex flex-shrink-0 flex-wrap align-items-center gap-2" role="group" aria-label="色彩">
+        <div class="color-overlap-wrap">
           <button type="button" class="color-rear" id="btnColor2" aria-label="背景色"></button>
           <button type="button" class="color-front active" id="btnColor1" aria-label="前景色"></button>
         </div>
-        <button type="button" class="ctrl-icon-btn" id="swapColors" title="交換前景／背景" aria-label="交換色彩"><i data-lucide="arrow-right-left"></i></button>
-        <label class="color-picker-wrap" title="編輯色彩">
-          <span class="color-picker-ico-wrap" aria-hidden="true"><i data-lucide="palette"></i></span>
-          <input type="color" id="colorPicker" value="#000000" aria-label="調整選取的色彩" />
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-icon-btn btn-icon-tiny" id="swapColors" aria-label="交換色彩"><i class="fa-solid fa-right-left" aria-hidden="true"></i></button>
+        <label class="color-picker-wrap mb-0">
+          <span class="color-picker-ico-wrap" aria-hidden="true"><i class="fa-solid fa-palette"></i></span>
+          <input type="color" class="form-control form-control-color" id="colorPicker" value="#000000" aria-label="調整選取的色彩" />
         </label>
-        <div class="swatches" id="swatches" aria-label="調色盤"></div>
+        <div class="swatches d-flex flex-wrap align-items-center gap-1" id="swatches" aria-label="調色盤"></div>
       </div>
     </header>
 
-    <div class="doc-tab-strip">
-      <div class="doc-tabs-scroll">
-        <div class="doc-tabs-row" role="tablist" aria-label="分頁">
-          <div id="docTabs" class="doc-tabs"></div>
-          <button type="button" class="doc-tab-new" id="newDocTab" title="新增分頁" aria-label="新增分頁"><i data-lucide="plus"></i></button>
+    <div class="doc-tab-strip w-100 overflow-hidden">
+      <div class="doc-tabs-scroll w-100">
+        <div class="doc-tabs-row w-100 flex-wrap">
+          <div class="doc-tabs-cluster">
+            <div id="docTabs" class="doc-tabs" role="tablist" aria-label="分頁"></div>
+            <button type="button" class="btn btn-sm btn-light border doc-tab-new" id="newDocTab" aria-label="新增分頁"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+          </div>
         </div>
       </div>
     </div>
 
-    <main class="canvas-wrap" id="canvasWrap" title="">
-      <canvas id="board" width="1280" height="800" aria-label="畫布"></canvas>
+    <main class="canvas-wrap overflow-hidden" id="canvasWrap">
+      <div class="canvas-pan-inner" id="canvasPanLayer">
+        <canvas id="board" width="1280" height="800" aria-label="畫布"></canvas>
+      </div>
     </main>
+
+    <footer class="app-footer kd-footer px-3 py-2" id="appFooter">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap" id="footerCursorBlock">
+          <span class="kd-footer-meta text-nowrap">游標（畫布座標）</span>
+          <span id="cursorPt" class="kd-footer-readout font-monospace user-select-all footer-cursor-val">—</span>
+        </div>
+        <span class="kd-footer-brand">KDrawer</span>
+      </div>
+    </footer>
   </div>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div class="modal fade" id="appConfirmModal" tabindex="-1" aria-labelledby="appConfirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="appConfirmModalLabel">請確認</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+        </div>
+        <div class="modal-body" id="appConfirmModalBody"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="appConfirmModalCancel">取消</button>
+          <button type="button" class="btn btn-primary" id="appConfirmModalOk">確定</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/lucide@0.477.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1080">
+    <div id="appToast" class="toast align-items-center text-bg-dark border-0" role="alert" aria-live="polite" aria-atomic="true" data-bs-delay="2800" data-bs-autohide="true">
+      <div class="d-flex">
+        <div class="toast-body" id="appToastBody"></div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="關閉"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
   <script src="paint.js"></script>
 </body>
 </html>

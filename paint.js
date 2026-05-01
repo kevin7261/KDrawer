@@ -9,8 +9,9 @@
   const clearBtn = document.getElementById("clear");
   const saveBtn = document.getElementById("save");
   const copyPngBtn = document.getElementById("copyPng");
-  const toastEl = document.getElementById("toast");
   const canvasWrap = document.getElementById("canvasWrap");
+  const appFooter = document.getElementById("appFooter");
+  const canvasPanLayer = document.getElementById("canvasPanLayer");
   const cursorPtEl = document.getElementById("cursorPt");
   const docTabsEl = document.getElementById("docTabs");
   const newDocTabBtn = document.getElementById("newDocTab");
@@ -69,8 +70,13 @@
   const ZOOM_MIN = 0.15;
   const ZOOM_MAX = 6;
   let zoomScale = 1;
-  /** 邏輯畫素 → pt（CSS 參考像素：96px = 72pt） */
-  const LOGICAL_PX_TO_PT = 72 / 96;
+
+  /** 畫布區平移（無捲軸，以 transform 移動） */
+  let panX = 0;
+  let panY = 0;
+  /** @type {{ pointerId: number; lastX: number; lastY: number } | null} */
+  let panDrag = null;
+  let pinchTouchDist = 0;
 
   /** @type {{ id: string; title: string; zoomScale?: number; logicalW?: number; logicalH?: number; canvasSnapshot: ImageData | null; history: ImageData[] }[]} */
   let documents = [];
@@ -122,6 +128,48 @@
     if (el) el.textContent = Math.round(zoomScale * 100) + "% · " + logicalW + "×" + logicalH;
   }
 
+  function syncPanTransform() {
+    if (canvasPanLayer) {
+      canvasPanLayer.style.transform = "translate3d(" + panX + "px, " + panY + "px, 0)";
+    }
+  }
+
+  function clampPan() {
+    if (!canvasWrap || !canvas || !canvasWrap.classList.contains("canvas-wrap--pannable")) return;
+    const margin = 2;
+    for (let iter = 0; iter < 16; iter++) {
+      syncPanTransform();
+      const wr = canvasWrap.getBoundingClientRect();
+      const cr = canvas.getBoundingClientRect();
+      let ax = 0;
+      let ay = 0;
+      if (cr.left > wr.left + margin) ax = wr.left + margin - cr.left;
+      else if (cr.right < wr.right - margin) ax = wr.right - margin - cr.right;
+      if (cr.top > wr.top + margin) ay = wr.top + margin - cr.top;
+      else if (cr.bottom < wr.bottom - margin) ay = wr.bottom - margin - cr.bottom;
+      if (ax === 0 && ay === 0) break;
+      panX += ax;
+      panY += ay;
+    }
+    syncPanTransform();
+  }
+
+  function endPanDrag(e) {
+    if (!panDrag) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== panDrag.pointerId) return;
+    const pid = panDrag.pointerId;
+    panDrag = null;
+    if (canvasWrap) {
+      canvasWrap.classList.remove("canvas-wrap--panning");
+      try {
+        canvasWrap.releasePointerCapture(pid);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    clampPan();
+  }
+
   function applyZoomScale(next) {
     zoomScale = clampZoom(next);
     const d = documents[activeDocIndex];
@@ -133,6 +181,7 @@
     if (!canvasWrap) {
       canvas.style.width = logicalW * zoomScale + "px";
       canvas.style.height = logicalH * zoomScale + "px";
+      syncPanTransform();
       syncZoomUi();
       return;
     }
@@ -146,14 +195,12 @@
     canvas.style.height = h + "px";
     const needPan = w > availW + 0.5 || h > availH + 0.5;
     canvasWrap.classList.toggle("canvas-wrap--pannable", needPan);
-    canvasWrap.title =
-      "目前畫布 " +
-      logicalW +
-      "×" +
-      logicalH +
-      " px · 縮放 " +
-      Math.round(zoomScale * 100) +
-      "%／在畫布區按住 Ctrl（Mac：⌘）並滾動滑鼠可縮放。";
+    if (!needPan) {
+      panX = 0;
+      panY = 0;
+    }
+    syncPanTransform();
+    requestAnimationFrame(() => clampPan());
     syncZoomUi();
   }
 
@@ -297,6 +344,11 @@
     const d = documents[index];
     if (!d) return;
 
+    panX = 0;
+    panY = 0;
+    panDrag = null;
+    if (canvasWrap) canvasWrap.classList.remove("canvas-wrap--panning");
+
     const oldSnap = d.canvasSnapshot ? cloneImageData(d.canvasSnapshot) : null;
     const oldLwStored =
       typeof d.logicalW === "number" && Number.isFinite(d.logicalW) ? Math.round(d.logicalW) : DEFAULT_LOGICAL_W;
@@ -306,8 +358,8 @@
     const { w, h } = normalizeDocLogicalSize(d);
     logicalW = w;
     logicalH = h;
-    setupHighResCanvas();
     zoomScale = clampZoom(typeof d.zoomScale === "number" && Number.isFinite(d.zoomScale) ? d.zoomScale : 1);
+    setupHighResCanvas();
     history.length = 0;
 
     if (oldSnap && oldSnap.width === canvas.width && oldSnap.height === canvas.height) {
@@ -346,6 +398,43 @@
     return { w, h };
   }
 
+  /**
+   * @param {string} message
+   * @returns {Promise<boolean>}
+   */
+  function showConfirm(message) {
+    return new Promise((resolve) => {
+      const modalEl = document.getElementById("appConfirmModal");
+      const bodyEl = document.getElementById("appConfirmModalBody");
+      const okBtn = document.getElementById("appConfirmModalOk");
+      if (!modalEl || !bodyEl || !okBtn || typeof bootstrap === "undefined" || !bootstrap.Modal) {
+        resolve(window.confirm(message));
+        return;
+      }
+      bodyEl.textContent = message;
+      const inst = bootstrap.Modal.getOrCreateInstance(modalEl);
+      let settled = false;
+      const done = (v) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
+      const onOk = (e) => {
+        e.preventDefault();
+        done(true);
+        inst.hide();
+      };
+      const onHidden = () => {
+        modalEl.removeEventListener("hidden.bs.modal", onHidden);
+        okBtn.removeEventListener("click", onOk);
+        done(false);
+      };
+      okBtn.addEventListener("click", onOk, { once: true });
+      modalEl.addEventListener("hidden.bs.modal", onHidden, { once: true });
+      inst.show();
+    });
+  }
+
   function syncCanvasSizeSelect() {
     if (!canvasSizePreset) return;
     const d = documents[activeDocIndex];
@@ -374,7 +463,7 @@
     canvasSizePreset.value = key;
   }
 
-  function applyCanvasSizeFromUserSelect() {
+  async function applyCanvasSizeFromUserSelect() {
     if (!canvasSizePreset) return;
 
     if (canvasSizePreset.value === CANVAS_VIEWPORT_OPTION) {
@@ -384,11 +473,10 @@
         syncCanvasSizeSelect();
         return;
       }
-      if (
-        !window.confirm(
-          "改為「跟隨視窗」後，畫布會隨瀏覽器／視窗調整；版面變小時僅保留左上角內容。確定嗎？"
-        )
-      ) {
+      const ok = await showConfirm(
+        "改為「跟隨視窗」後，畫布會隨瀏覽器／視窗調整；版面變小時僅保留左上角內容。確定嗎？"
+      );
+      if (!ok) {
         syncCanvasSizeSelect();
         return;
       }
@@ -407,7 +495,8 @@
     if (!dFixed) return;
     if (parsed.w === logicalW && parsed.h === logicalH && !documentUsesViewport(dFixed)) return;
 
-    if (!window.confirm("改變畫布大小會清除此分頁內容並重設復原紀錄，確定嗎？")) {
+    const ok2 = await showConfirm("改變畫布大小會清除此分頁內容並重設復原紀錄，確定嗎？");
+    if (!ok2) {
       syncCanvasSizeSelect();
       return;
     }
@@ -484,7 +573,6 @@
     persistActiveDocument();
     renderDocTabs();
     applyCanvasDisplaySize();
-    if (typeof lucide !== "undefined" && lucide.createIcons) lucide.createIcons();
   }
 
   function closeDocumentAt(closeIdx) {
@@ -506,7 +594,6 @@
     loadDocumentAt(activeDocIndex);
     renderDocTabs();
     applyCanvasDisplaySize();
-    if (typeof lucide !== "undefined" && lucide.createIcons) lucide.createIcons();
   }
 
   function renderDocTabs() {
@@ -526,9 +613,9 @@
 
       const closeBtn = document.createElement("button");
       closeBtn.type = "button";
-      closeBtn.className = "doc-tab__close";
+      closeBtn.className = "btn btn-sm btn-outline-secondary border-0 doc-tab__close";
       closeBtn.setAttribute("aria-label", "關閉「" + doc.title + "」");
-      closeBtn.innerHTML = '<i data-lucide="x"></i>';
+      closeBtn.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
       closeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         closeDocumentAt(i);
@@ -538,11 +625,13 @@
       wrap.appendChild(closeBtn);
       docTabsEl.appendChild(wrap);
     });
-    if (typeof lucide !== "undefined" && lucide.createIcons) lucide.createIcons();
   }
 
   function clientToCanvas(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1e-6 || rect.height < 1e-6) {
+      return { x: 0, y: 0 };
+    }
     const scaleX = logicalW / rect.width;
     const scaleY = logicalH / rect.height;
     return {
@@ -558,21 +647,24 @@
   function updateCursorPt(clientX, clientY) {
     if (!cursorPtEl) return;
     const rect = canvas.getBoundingClientRect();
+    const tol = 0.5;
     if (
-      clientX < rect.left ||
-      clientX >= rect.right ||
-      clientY < rect.top ||
-      clientY >= rect.bottom
+      clientX < rect.left - tol ||
+      clientX > rect.right + tol ||
+      clientY < rect.top - tol ||
+      clientY > rect.bottom + tol
     ) {
       cursorPtEl.textContent = "—";
       return;
     }
     const { x, y } = clientToCanvas(clientX, clientY);
-    const cx = Math.min(logicalW, Math.max(0, x));
-    const cy = Math.min(logicalH, Math.max(0, y));
-    const xPt = (cx * LOGICAL_PX_TO_PT).toFixed(1);
-    const yPt = (cy * LOGICAL_PX_TO_PT).toFixed(1);
-    cursorPtEl.textContent = xPt + " × " + yPt + " pt";
+    let xi = Math.round(x);
+    let yi = Math.round(y);
+    const maxXi = Math.max(0, logicalW - 1);
+    const maxYi = Math.max(0, logicalH - 1);
+    xi = Math.max(0, Math.min(maxXi, xi));
+    yi = Math.max(0, Math.min(maxYi, yi));
+    cursorPtEl.textContent = xi + ", " + yi + " px";
   }
 
   function rgbToHex(r, g, b) {
@@ -833,17 +925,20 @@
   }
 
   function showToast(message) {
-    if (!toastEl) return;
-    toastEl.textContent = message;
-    toastEl.hidden = false;
-    toastEl.classList.add("is-visible");
-    clearTimeout(showToast._timer);
-    showToast._timer = setTimeout(() => {
-      toastEl.classList.remove("is-visible");
-      setTimeout(() => {
-        toastEl.hidden = true;
-      }, 280);
-    }, 2400);
+    const toastEl = document.getElementById("appToast");
+    const bodyEl = document.getElementById("appToastBody");
+    if (!toastEl || !bodyEl) return;
+    bodyEl.textContent = message;
+    if (typeof bootstrap !== "undefined" && bootstrap.Toast) {
+      const t = bootstrap.Toast.getOrCreateInstance(toastEl, { autohide: true, delay: 2800 });
+      t.show();
+    } else {
+      toastEl.classList.add("show");
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(() => {
+        toastEl.classList.remove("show");
+      }, 2800);
+    }
   }
 
   async function copyCanvasPng() {
@@ -890,15 +985,22 @@
     newDocTabBtn.addEventListener("click", addDocument);
   }
   if (canvasSizePreset) {
-    canvasSizePreset.addEventListener("change", applyCanvasSizeFromUserSelect);
+    canvasSizePreset.addEventListener("change", () => {
+      void applyCanvasSizeFromUserSelect();
+    });
+  }
+
+  if (appFooter) {
+    appFooter.addEventListener("pointerenter", () => appFooter.classList.add("app-footer--hover"));
+    appFooter.addEventListener("pointerleave", () => appFooter.classList.remove("app-footer--hover"));
   }
 
   SWATCHES.forEach((hex) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "swatch";
+    b.className = "swatch btn btn-sm p-0 border";
     b.style.background = hex;
-    b.title = hex;
+    b.setAttribute("aria-label", "色票 " + hex);
     b.addEventListener("click", () => {
       if (activeColorSlot === 1) color1 = hex;
       else color2 = hex;
@@ -957,15 +1059,116 @@
   if (zoomLabelBtn) zoomLabelBtn.addEventListener("click", () => applyZoomScale(1));
 
   if (canvasWrap) {
-    canvasWrap.addEventListener("pointermove", (e) => updateCursorPt(e.clientX, e.clientY), { passive: true });
-    canvasWrap.addEventListener("pointerleave", clearCursorPt);
+    canvasWrap.addEventListener(
+      "pointermove",
+      (e) => {
+        if (panDrag && e.pointerId === panDrag.pointerId) {
+          panX += e.clientX - panDrag.lastX;
+          panY += e.clientY - panDrag.lastY;
+          panDrag.lastX = e.clientX;
+          panDrag.lastY = e.clientY;
+          syncPanTransform();
+        }
+        updateCursorPt(e.clientX, e.clientY);
+      },
+      { passive: true }
+    );
+    canvasWrap.addEventListener("pointerleave", (e) => {
+      const rt = e.relatedTarget;
+      if (rt && appFooter && appFooter.contains(/** @type {Node} */ (rt))) return;
+      clearCursorPt();
+    });
+    canvasWrap.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (!canvasWrap.classList.contains("canvas-wrap--pannable")) return;
+        const wantPan = e.button === 1 || (e.button === 0 && e.altKey);
+        if (!wantPan) return;
+        if (!canvasWrap.contains(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          canvasWrap.setPointerCapture(e.pointerId);
+        } catch (_) {
+          /* ignore */
+        }
+        panDrag = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+        canvasWrap.classList.add("canvas-wrap--panning");
+      },
+      true
+    );
+    canvasWrap.addEventListener("pointerup", endPanDrag);
+    canvasWrap.addEventListener("pointercancel", endPanDrag);
+    canvasWrap.addEventListener("lostpointercapture", (e) => {
+      if (panDrag && e.pointerId === panDrag.pointerId) endPanDrag(e);
+    });
     canvasWrap.addEventListener(
       "wheel",
       (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return;
+        if (!canvasWrap.contains(e.target)) return;
         e.preventDefault();
         const mult = e.deltaY < 0 ? ZOOM_WHEEL_FACTOR : 1 / ZOOM_WHEEL_FACTOR;
         applyZoomScale(zoomScale * mult);
+      },
+      { passive: false }
+    );
+
+    function touchPinchDist(tl) {
+      if (tl.length < 2) return 0;
+      const a = tl[0];
+      const b = tl[1];
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+    canvasWrap.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          pinchTouchDist = touchPinchDist(e.touches);
+        }
+      },
+      { passive: false }
+    );
+    canvasWrap.addEventListener(
+      "touchmove",
+      (e) => {
+        if (e.touches.length === 2 && pinchTouchDist > 1) {
+          e.preventDefault();
+          const d = touchPinchDist(e.touches);
+          let ratio = d / pinchTouchDist;
+          ratio = Math.min(1.12, Math.max(1 / 1.12, ratio));
+          applyZoomScale(zoomScale * ratio);
+          pinchTouchDist = d;
+        }
+      },
+      { passive: false }
+    );
+    canvasWrap.addEventListener("touchend", (e) => {
+      if (e.touches.length < 2) pinchTouchDist = 0;
+    });
+    canvasWrap.addEventListener("touchcancel", () => {
+      pinchTouchDist = 0;
+    });
+
+    /* Safari（iOS）：避免瀏覽器搶走雙指縮放，讓畫布區用自訂捏合縮放 */
+    canvasWrap.addEventListener(
+      "gesturestart",
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false }
+    );
+    canvasWrap.addEventListener(
+      "gesturechange",
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false }
+    );
+    canvasWrap.addEventListener(
+      "gestureend",
+      (e) => {
+        e.preventDefault();
       },
       { passive: false }
     );
@@ -975,6 +1178,7 @@
 
   function pointerDown(e) {
     if (e.pointerType === "mouse" && e.button === 1) return;
+    if (e.pointerType === "mouse" && e.button === 0 && e.altKey) return;
     canvas.setPointerCapture(e.pointerId);
     const { x, y } = clientToCanvas(e.clientX, e.clientY);
     const right = e.pointerType === "mouse" && e.button === 2;
@@ -1009,6 +1213,9 @@
   canvas.addEventListener("lostpointercapture", pointerUp);
 
   document.addEventListener("keydown", (e) => {
+    const tag = e.target && e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "OPTION") return;
+
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       undo();
@@ -1016,6 +1223,15 @@
     if ((e.ctrlKey || e.metaKey) && (e.code === "Digit0" || e.code === "Numpad0")) {
       e.preventDefault();
       applyZoomScale(1);
+    }
+    if (e.ctrlKey || e.metaKey) {
+      if (e.code === "Equal" || e.code === "NumpadAdd") {
+        e.preventDefault();
+        applyZoomScale(zoomScale * ZOOM_BTN_FACTOR);
+      } else if (e.code === "Minus" || e.code === "NumpadSubtract") {
+        e.preventDefault();
+        applyZoomScale(zoomScale / ZOOM_BTN_FACTOR);
+      }
     }
   });
 
@@ -1026,8 +1242,4 @@
   requestAnimationFrame(() => scheduleViewportLogicalSync());
 
   applyCanvasCursor();
-
-  if (typeof lucide !== "undefined" && typeof lucide.createIcons === "function") {
-    lucide.createIcons();
-  }
 })();
