@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KDrawer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=Noto+Sans+TC:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="control-bar" aria-label="控制列">
+      <!-- 小畫家／Office 慣例：剪貼簿與檔案在左 -->
+      <div class="control-bar__group control-bar__clipboard" role="group" aria-label="剪貼簿與檔案">
+        <button type="button" class="ctrl-action" id="undo" title="復原（Ctrl+Z）" aria-label="復原"><i data-lucide="undo-2"></i></button>
+        <button type="button" class="ctrl-action ctrl-action--accent" id="copyPng" title="複製目前畫布為 PNG" aria-label="複製 PNG"><i data-lucide="clipboard-copy"></i></button>
+        <button type="button" class="ctrl-action ctrl-action--accent" id="save" title="下載 PNG" aria-label="另存新檔"><i data-lucide="download"></i></button>
+        <button type="button" class="ctrl-action ctrl-action--danger" id="clear" title="清空此分頁畫布（全白，可復原）" aria-label="清空畫布"><i data-lucide="trash-2"></i></button>
+      </div>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <!-- 工具箱順序（傳統小畫家左欄→右欄、由上而下改為左→右） -->
+      <nav class="control-bar__tools" role="toolbar" aria-label="繪圖工具">
+        <button type="button" class="ctrl-tool" data-tool="eraser" title="橡皮擦（背景色）" aria-label="橡皮擦"><i data-lucide="eraser"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="fill" title="填滿" aria-label="填滿"><i data-lucide="paint-bucket"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="pick" title="滴管" aria-label="滴管"><i data-lucide="pipette"></i></button>
+        <button type="button" class="ctrl-tool active" data-tool="pencil" title="鉛筆" aria-label="鉛筆"><i data-lucide="pencil"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="pen" title="筆刷" aria-label="筆刷"><i data-lucide="paintbrush"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="line" title="直線" aria-label="直線"><i data-lucide="slash"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="rect" title="矩形" aria-label="矩形"><i data-lucide="square"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="ellipse" title="橢圓" aria-label="橢圓"><i data-lucide="circle"></i></button>
+        <button type="button" class="ctrl-tool" data-tool="roundrect" title="圓角矩形" aria-label="圓角矩形"><i data-lucide="square-round-corner"></i></button>
+      </nav>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <div class="control-bar__zoom" role="group" aria-label="畫布縮放">
+        <button type="button" class="ctrl-zoom-btn" id="zoomOutBtn" title="縮小" aria-label="縮小"><i data-lucide="zoom-out"></i></button>
+        <button type="button" class="ctrl-zoom-label" id="zoomLabel" title="重設為 100%（Ctrl+0 或 ⌘0）" aria-label="縮放比例，點擊重設">100%</button>
+        <button type="button" class="ctrl-zoom-btn" id="zoomInBtn" title="放大" aria-label="放大"><i data-lucide="zoom-in"></i></button>
+      </div>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <div class="control-bar__cursor" role="status" aria-live="polite" aria-label="游標在畫布上的位置（pt）">
+        <span class="canvas-size-label">游標</span>
+        <span id="cursorPt" class="control-bar__cursor-val">—</span>
+      </div>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <div class="control-bar__canvas-size" role="group" aria-label="畫布大小">
+        <label class="canvas-size-label" for="canvasSizePreset">畫布</label>
+        <select id="canvasSizePreset" class="ctrl-select" title="「跟隨視窗」以目前畫布區大小為像素尺寸；選固定分辨率會清除並重設復原">
+          <option value="viewport" selected>跟隨視窗</option>
+          <option value="2560x1440">2560 × 1440</option>
+          <option value="1920x1080">1920 × 1080</option>
+          <option value="1600x900">1600 × 900</option>
+          <option value="1280x800">1280 × 800</option>
+          <option value="1366x768">1366 × 768</option>
+          <option value="1024x768">1024 × 768</option>
+          <option value="800x600">800 × 600</option>
+          <option value="640x480">640 × 480</option>
+        </select>
+      </div>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <!-- 筆觸大小（對應小畫家「大小」） -->
+      <div class="control-bar__brush" role="group" aria-label="筆觸大小">
+        <label class="brush-label" for="brushSize"><span>大小</span> <strong id="brushSizeVal">4</strong>px</label>
+        <input type="range" id="brushSize" min="1" max="48" value="4" />
+      </div>
+
+      <div class="control-bar__sep" role="presentation"></div>
+
+      <!-- 色彩在右（小畫家／Adobe 皆將色票置於工具列末端） -->
+      <div class="control-bar__palette" role="group" aria-label="色彩">
+        <div class="color-overlap-wrap" title="點選編輯前景或背景色">
+          <button type="button" class="color-rear" id="btnColor2" aria-label="背景色"></button>
+          <button type="button" class="color-front active" id="btnColor1" aria-label="前景色"></button>
+        </div>
+        <button type="button" class="ctrl-icon-btn" id="swapColors" title="交換前景／背景" aria-label="交換色彩"><i data-lucide="arrow-right-left"></i></button>
+        <label class="color-picker-wrap" title="編輯色彩">
+          <span class="color-picker-ico-wrap" aria-hidden="true"><i data-lucide="palette"></i></span>
+          <input type="color" id="colorPicker" value="#000000" aria-label="調整選取的色彩" />
+        </label>
+        <div class="swatches" id="swatches" aria-label="調色盤"></div>
+      </div>
+    </header>
+
+    <div class="doc-tab-strip">
+      <div class="doc-tabs-scroll">
+        <div class="doc-tabs-row" role="tablist" aria-label="分頁">
+          <div id="docTabs" class="doc-tabs"></div>
+          <button type="button" class="doc-tab-new" id="newDocTab" title="新增分頁" aria-label="新增分頁"><i data-lucide="plus"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <main class="canvas-wrap" id="canvasWrap" title="">
+      <canvas id="board" width="1280" height="800" aria-label="畫布"></canvas>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.477.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
+  <script src="paint.js"></script>
+</body>
+</html>
