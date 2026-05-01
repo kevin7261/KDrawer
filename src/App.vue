@@ -9,22 +9,27 @@
       <!-- 動作群組 -->
       <div class="btn-group btn-group-sm" role="group" aria-label="剪貼簿與檔案">
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action btn-icon-tiny"
+          title="復原上一步繪圖（可多次）"
           @click="undo" aria-label="復原">
           <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
         </button>
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+          title="將整張畫布複製為 PNG 到剪貼簿"
           @click="copyCanvasPng" aria-label="複製 PNG">
           <i class="fa-solid fa-copy" aria-hidden="true"></i>
         </button>
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+          title="只複製有內容的範圍（裁切邊界）為 PNG"
           @click="copyCanvasPngDrawnBounds" aria-label="複製繪製範圍 PNG">
           <i class="fa-solid fa-crop-simple" aria-hidden="true"></i>
         </button>
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+          title="下載目前畫布為 PNG 檔"
           @click="savePng" aria-label="另存新檔">
           <i class="fa-solid fa-download" aria-hidden="true"></i>
         </button>
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger btn-icon-tiny"
+          title="清空畫布內容（會先確認）"
           @click="clearCanvas" aria-label="清空畫布">
           <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
         </button>
@@ -43,6 +48,7 @@
           :key="t.value"
           type="button"
           :class="['btn', 'btn-sm', 'btn-outline-light', 'ctrl-tool', 'btn-icon-tiny', { active: tool === t.value }]"
+          :title="t.label"
           :aria-label="t.label"
           @click="tool = t.value"
         >
@@ -55,14 +61,17 @@
       <!-- 縮放 -->
       <div class="btn-group btn-group-sm ctrl-zoom-group" role="group" aria-label="畫布縮放">
         <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny"
+          title="縮小畫布顯示"
           @click="zoomOut" aria-label="縮小">
           <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
         </button>
         <button type="button" class="btn btn-sm ctrl-zoom-label ctrl-zoom-readout px-2 text-nowrap"
+          title="目前縮放比例；點擊還原為 100%"
           @click="zoomReset" aria-label="縮放比例，點擊重設">
           {{ zoomLabel }}
         </button>
         <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny"
+          title="放大畫布顯示"
           @click="zoomIn" aria-label="放大">
           <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
         </button>
@@ -76,6 +85,7 @@
         <select
           id="canvasSizePreset"
           class="form-select form-select-sm ctrl-select-on-dark kd-select"
+          title="畫布像素寬高；「跟隨視窗」會隨視窗變化"
           aria-label="畫布像素尺寸"
           v-model="canvasSizePresetValue"
           @change="handleCanvasSizeChange"
@@ -107,6 +117,7 @@
           min="1"
           max="48"
           v-model.number="brushSize"
+          title="鉛筆、筆刷、橡皮擦與形狀線條的寬度（像素）"
           aria-label="筆觸大小"
         />
       </div>
@@ -121,6 +132,7 @@
             class="color-rear"
             :class="{ active: activeColorSlot === 2 }"
             :style="{ background: color2 }"
+            title="背景色：橡皮擦與右鍵繪製使用此色；點擊以編輯"
             @click="activeColorSlot = 2"
             aria-label="背景色"
           ></button>
@@ -129,17 +141,19 @@
             class="color-front"
             :class="{ active: activeColorSlot === 1 }"
             :style="{ background: color1 }"
+            title="前景色：一般左鍵繪製與填色使用；點擊以編輯"
             @click="activeColorSlot = 1"
             aria-label="前景色"
           ></button>
         </div>
 
         <button type="button" class="btn btn-sm btn-outline-light ctrl-icon-btn btn-icon-tiny"
+          title="交換前景色與背景色"
           @click="swapColors" aria-label="交換色彩">
           <i class="fa-solid fa-right-left" aria-hidden="true"></i>
         </button>
 
-        <label class="color-picker-wrap mb-0">
+        <label class="color-picker-wrap mb-0" title="調整目前選取槽位（前景或背景）的顏色">
           <span class="color-picker-ico-wrap" aria-hidden="true">
             <i class="fa-solid fa-palette"></i>
           </span>
@@ -289,15 +303,15 @@ const SWATCHES = [
 ]
 
 const TOOLS = [
-  { value: 'eraser',    label: '橡皮擦',   icon: 'fa-solid fa-eraser' },
-  { value: 'fill',      label: '填滿',     icon: 'fa-solid fa-fill-drip' },
-  { value: 'pick',      label: '滴管',     icon: 'fa-solid fa-eye-dropper' },
-  { value: 'pencil',    label: '鉛筆',     icon: 'fa-solid fa-pencil' },
-  { value: 'pen',       label: '筆刷',     icon: 'fa-solid fa-paintbrush' },
-  { value: 'line',      label: '直線',     icon: 'fa-solid fa-slash' },
-  { value: 'rect',      label: '矩形',     icon: 'fa-regular fa-square' },
-  { value: 'ellipse',   label: '橢圓',     icon: 'fa-regular fa-circle' },
+  { value: 'pencil', label: '鉛筆', icon: 'fa-solid fa-pencil' },
+  { value: 'pen', label: '筆刷', icon: 'fa-solid fa-paintbrush' },
+  { value: 'line', label: '直線', icon: 'fa-solid fa-slash' },
+  { value: 'rect', label: '矩形', icon: 'fa-regular fa-square' },
+  { value: 'ellipse', label: '橢圓', icon: 'fa-regular fa-circle' },
   { value: 'roundrect', label: '圓角矩形', icon: 'fa-solid fa-vector-square' },
+  { value: 'fill', label: '填滿', icon: 'fa-solid fa-fill-drip' },
+  { value: 'pick', label: '滴管', icon: 'fa-solid fa-eye-dropper' },
+  { value: 'eraser', label: '橡皮擦', icon: 'fa-solid fa-eraser' },
 ]
 
 // ── Template refs ──────────────────────────────────────────────────────────

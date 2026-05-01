@@ -1,4 +1,5 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { toolCursorCss } from '../toolCursors.js'
 
 export function usePainter({
   canvasRef,
@@ -494,7 +495,7 @@ export function usePainter({
   function applyCanvasCursor() {
     const c = canvas()
     if (!c) return
-    c.style.cursor = tool.value === 'pick' ? 'cell' : 'crosshair'
+    c.style.cursor = toolCursorCss(tool.value)
   }
 
   function applyFreehandStrokeStyle() {
@@ -502,10 +503,25 @@ export function usePainter({
     let w = Number(brushSize.value)
     if (!Number.isFinite(w) || w < 1) w = 1
     if (w > 48) w = 48
+
+    ctx.shadowBlur = 0
+    ctx.shadowOffsetX = 0
+    ctx.shadowOffsetY = 0
+    ctx.shadowColor = 'transparent'
+
     if (tool.value === 'pencil') {
-      ctx.lineWidth = w
-      ctx.lineCap = w <= 1 ? 'butt' : 'round'
-      ctx.lineJoin = w <= 1 ? 'miter' : 'round'
+      // 細、邊緣乾淨（無陰影）；維持 round 以免分段描線出現缺口
+      ctx.lineWidth = Math.max(1, w * 0.82)
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+    } else if (tool.value === 'pen') {
+      // 較粗 + 同色大幅柔邊暈開（shadowBlur／上限愈大愈糊）
+      ctx.lineWidth = Math.max(1, w * 1.28)
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      const ss = ctx.strokeStyle
+      ctx.shadowColor = typeof ss === 'string' ? ss : '#000000'
+      ctx.shadowBlur = Math.min(72, w * 3.5)
     } else {
       ctx.lineWidth = w
       ctx.lineCap = 'round'
@@ -581,9 +597,9 @@ export function usePainter({
     pushHistory()
     drawing = true; lastX = x; lastY = y
     const strokeColor = (tool.value === 'eraser' || isRightButton) ? color2.value : color1.value
-    applyFreehandStrokeStyle()
     ctx.globalCompositeOperation = 'source-over'
     ctx.strokeStyle = strokeColor
+    applyFreehandStrokeStyle()
   }
 
   function drawSegment(x, y) {
@@ -599,7 +615,11 @@ export function usePainter({
   function endStroke() {
     if (dragShape) dragShape = null
     drawing = false
-    if (ctx) ctx.globalCompositeOperation = 'source-over'
+    if (ctx) {
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.shadowBlur = 0
+      ctx.shadowColor = 'transparent'
+    }
   }
 
   function hexToRgb(hex) {
