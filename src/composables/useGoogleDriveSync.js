@@ -11,16 +11,45 @@ const LEGACY_SESSION_NAME = 'kdrawer-session.json'
 const POLL_INTERVAL_MS = 12000
 /** 畫布每次持久化後會觸發上傳；極短 debounce 以合併同一幀內多次 persist */
 const UPLOAD_DEBOUNCE_MS = 200
+/** GIS script 已插入但 load 早於我們掛 listener 時，用輪詢補救 */
+const GIS_SCRIPT_POLL_MS = 50
+const GIS_SCRIPT_POLL_MAX = 200
+/** OAuth 彈窗若未回呼（關閉視窗、阻擋彈窗）會永遠 pending，須逾時 */
+const OAUTH_CALLBACK_TIMEOUT_MS = 180000
 
 
 function waitForGoogleAccountsScript() {
   if (window.google?.accounts?.oauth2) return Promise.resolve()
 
   return new Promise((resolve, reject) => {
+    let settled = false
+    const ok = () => {
+      if (settled || !window.google?.accounts?.oauth2) return
+      settled = true
+      resolve()
+    }
+    const fail = message => {
+      if (settled) return
+      settled = true
+      reject(new Error(message))
+    }
+
     const existing = document.querySelector(`script[src="${GOOGLE_ACCOUNTS_SCRIPT}"]`)
     if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true })
-      existing.addEventListener('error', () => reject(new Error('Google Identity Services 載入失敗')), { once: true })
+      existing.addEventListener('load', ok, { once: true })
+      existing.addEventListener('error', () => fail('Google Identity Services 載入失敗'), { once: true })
+      let n = 0
+      const iv = setInterval(() => {
+        if (window.google?.accounts?.oauth2) {
+          clearInterval(iv)
+          ok()
+          return
+        }
+        if (++n >= GIS_SCRIPT_POLL_MAX) {
+          clearInterval(iv)
+          fail('Google Identity Services 載入逾時')
+        }
+      }, GIS_SCRIPT_POLL_MS)
       return
     }
 
@@ -28,8 +57,21 @@ function waitForGoogleAccountsScript() {
     script.src = GOOGLE_ACCOUNTS_SCRIPT
     script.async = true
     script.defer = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Google Identity Services 載入失敗'))
+    script.onload = () => {
+      let n = 0
+      const iv = setInterval(() => {
+        if (window.google?.accounts?.oauth2) {
+          clearInterval(iv)
+          ok()
+          return
+        }
+        if (++n >= GIS_SCRIPT_POLL_MAX) {
+          clearInterval(iv)
+          fail('Google Identity Services 載入逾時')
+        }
+      }, GIS_SCRIPT_POLL_MS)
+    }
+    script.onerror = () => fail('Google Identity Services 載入失敗')
     document.head.appendChild(script)
   })
 }
@@ -163,18 +205,36 @@ export function useGoogleDriveSync({
   async function requestAccessToken(prompt = 'consent') {
     const client = await initTokenClient()
     return new Promise((resolve, reject) => {
+      let timeoutId = null
+      let finished = false
+      const finish = (fn, arg) => {
+        if (finished) return
+        finished = true
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
+        fn(arg)
+      }
+
+      timeoutId = setTimeout(() => {
+        timeoutId = null
+        client.callback = () => {}
+        finish(reject, new Error('授權逾時：請允許彈出視窗並完成 Google 登入，或稍後再試'))
+      }, OAUTH_CALLBACK_TIMEOUT_MS)
+
       client.callback = response => {
         if (response?.error) {
-          reject(new Error(response.error))
+          finish(reject, new Error(response.error))
           return
         }
         accessToken = response.access_token || ''
         setSignedIn(Boolean(accessToken))
         if (!accessToken) {
-          reject(new Error('沒有取得 Google 授權權杖'))
+          finish(reject, new Error('沒有取得 Google 授權權杖'))
           return
         }
-        resolve(accessToken)
+        finish(resolve, accessToken)
       }
       client.requestAccessToken({ prompt })
     })
