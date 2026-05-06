@@ -12,6 +12,17 @@
 </head>
 <body>
   <div id="app"></div>
+  <script>
+    (function () {
+      if (!/github\.io$/i.test(location.hostname || '')) return
+      var el = document.querySelector('script[type="module"][src*="src/main"]')
+      var raw = el && el.getAttribute('src')
+      if (!raw) return
+      if (location.pathname.indexOf('/docs') >= 0) return
+      if (location.pathname.indexOf('/KDrawer') !== 0) return
+      location.replace('/KDrawer/docs/' + location.search + location.hash)
+    })()
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
