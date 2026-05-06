@@ -5,6 +5,8 @@
  * SKIP_DOCS_PUSH=1 → 只做 build，不執行 git。
  */
 import { execSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 function sh(cmd, opts = {}) {
   execSync(cmd, { stdio: 'inherit', encoding: 'utf8', ...opts })
@@ -42,6 +44,30 @@ function commitsAheadOfUpstream() {
 if (process.env.SKIP_DOCS_PUSH === '1') {
   console.log('已略過 git（SKIP_DOCS_PUSH=1）。')
   process.exit(0)
+}
+
+function bundledGoogleClientIdLikelyEmbedded() {
+  const dir = join(process.cwd(), 'docs', 'assets')
+  if (!existsSync(dir)) return false
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.js')) continue
+    const s = readFileSync(join(dir, f), 'utf8')
+    if (/\.apps\.googleusercontent\.com/.test(s) && !/your-google-oauth-client-id/.test(s))
+      return true
+  }
+  return false
+}
+
+if (!bundledGoogleClientIdLikelyEmbedded()) {
+  console.warn(
+    '\n⚠ 本次 build 的 docs/ 內看不出有效的 Google OAuth Client ID，線站上會顯示「雲端未設定」。',
+  )
+  console.warn(
+    '請在專案根目錄準備 `.env.production`（見 .env.example）寫入 VITE_GOOGLE_CLIENT_ID，再執行一次 npm run deploy。',
+  )
+  console.warn(
+    '另請在 Google Cloud Console → OAuth 用戶端 →「已授權的 JavaScript 來源」加入你的 GitHub Pages 網域（例如 https://kevin7261.github.io）。\n',
+  )
 }
 
 if (!shSilent('git rev-parse --git-dir')) {
