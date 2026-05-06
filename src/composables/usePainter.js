@@ -16,6 +16,8 @@ export function usePainter({
   showConfirm,
   showToast,
   onCloseDocument = null,
+  /** 若回傳 false，不寫入 sessionStorage（雲端登入時由 Drive 保存） */
+  persistLocalSessionStorage = () => true,
 }) {
   // ── Internal non-reactive state ───────────────────────────────────────────
   let ctx = null
@@ -313,8 +315,33 @@ export function usePainter({
     if (d) d.pixelDirty = true
   }
 
+  function shouldWriteSessionStorage() {
+    try {
+      return persistLocalSessionStorage() !== false
+    } catch (_) {
+      return true
+    }
+  }
+
+  function buildSessionPayloadV1() {
+    return {
+      v: 1,
+      updatedAt: Date.now(),
+      activeDocIndex: activeDocIndex.value,
+      documents: documents.value.map(d => ({
+        id: d.id,
+        title: d.title,
+        zoomScale: d.zoomScale,
+        useViewportSize: d.useViewportSize,
+        logicalW: d.logicalW,
+        logicalH: d.logicalH,
+        updatedAt: typeof d.updatedAt === 'number' && Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
+        png: d.canvasSnapshot ? imageDataToPngDataURL(d.canvasSnapshot) : null,
+      })),
+    }
+  }
+
   function scheduleSessionPersistence() {
-    if (typeof sessionStorage === 'undefined') return
     if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
     sessionSaveTimer = setTimeout(() => {
       sessionSaveTimer = null
@@ -328,31 +355,30 @@ export function usePainter({
   }
 
   function flushSessionPersistence() {
-    if (typeof sessionStorage === 'undefined') return
     sessionFlushInProgress = true
     try {
       persistActiveDocument()
-      const payload = {
-        v: 1,
-        updatedAt: Date.now(),
-        activeDocIndex: activeDocIndex.value,
-        documents: documents.value.map(d => ({
-          id: d.id,
-          title: d.title,
-          zoomScale: d.zoomScale,
-          useViewportSize: d.useViewportSize,
-          logicalW: d.logicalW,
-          logicalH: d.logicalH,
-          updatedAt: typeof d.updatedAt === 'number' && Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
-          png: d.canvasSnapshot ? imageDataToPngDataURL(d.canvasSnapshot) : null,
-        })),
-      }
+      if (typeof sessionStorage === 'undefined') return
+      if (!shouldWriteSessionStorage()) return
+      const payload = buildSessionPayloadV1()
       sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload))
     } catch (e) {
       if (e && e.name === 'QuotaExceededError') showToast('自動儲存失敗：內容超過瀏覽器上限')
     } finally {
       sessionFlushInProgress = false
     }
+  }
+
+  /** 移除本機 session JSON（雲端同步成功後呼叫） */
+  function clearPersistedSession() {
+    if (sessionSaveTimer) {
+      clearTimeout(sessionSaveTimer)
+      sessionSaveTimer = null
+    }
+    if (typeof sessionStorage === 'undefined') return
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY)
+    } catch (_) {}
   }
 
   function flushSessionPersistenceSync() {
@@ -1068,10 +1094,10 @@ export function usePainter({
   function getPayload() {
     flushSessionPersistenceSync()
     try {
-      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY)
-      if (raw) return JSON.parse(raw)
-    } catch (_) {}
-    return null
+      return buildSessionPayloadV1()
+    } catch (_) {
+      return null
+    }
   }
 
   async function applyPayload(payload) {
@@ -1101,7 +1127,9 @@ export function usePainter({
       loadDocumentAt(activeDocIndex.value)
       syncCanvasSizeSelect()
       applyCanvasDisplaySize()
-      try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload)) } catch (_) {}
+      if (shouldWriteSessionStorage()) {
+        try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload)) } catch (_) {}
+      }
     } catch (e) {
       showToast('套用雲端資料失敗：' + (e?.message || '未知錯誤'))
     }
@@ -1203,5 +1231,7 @@ export function usePainter({
     switchToDocument, addDocument, closeDocumentAt,
     handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
     getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
+    clearPersistedSession,
+    flushLocalSessionNow: flushSessionPersistenceSync,
   }
 }

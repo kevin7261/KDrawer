@@ -338,7 +338,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { usePainter } from './composables/usePainter.js'
 import { useGoogleDriveSync } from './composables/useGoogleDriveSync.js'
 
@@ -430,6 +430,8 @@ function showToast(message) {
 
 // ── Painter／雲端刪檔 shim（閉包避免 composable 循環引用） ─────────────────────
 const driveDeleteShim = { fn: (_id) => {} }
+/** 與 Google 登入狀態同步：登入時不寫 sessionStorage，登出後再寫回本機備份 */
+const driveSignedInRef = ref(false)
 
 // ── Painter composable ─────────────────────────────────────────────────────
 const {
@@ -438,12 +440,15 @@ const {
   switchToDocument, addDocument, closeDocumentAt,
   handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
   getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
+  clearPersistedSession,
+  flushLocalSessionNow,
 } = usePainter({
   canvasRef, canvasWrapRef, canvasPanLayerRef, appFooterRef,
   tool, brushSize, color1, color2, activeColorSlot,
   canvasSizePresetValue, customSizeOption,
   showConfirm, showToast,
   onCloseDocument: id => driveDeleteShim.fn(id),
+  persistLocalSessionStorage: () => !driveSignedInRef.value,
 })
 
 // ── Google Drive sync ───────────────────────────────────────────────────────
@@ -458,8 +463,21 @@ const {
   mergeRemoteDocFiles,
   onLocalChange,
   showToast,
+  mirrorSignedInRef: driveSignedInRef,
+  onCloudSyncSuccess: () => {
+    clearPersistedSession()
+  },
 })
 driveDeleteShim.fn = driveDeleteDriveDoc
+
+watch(
+  () => driveState.signedIn,
+  (signedIn, wasSignedIn) => {
+    if (wasSignedIn === true && signedIn === false) {
+      flushLocalSessionNow()
+    }
+  },
+)
 
 </script>
 

@@ -98,6 +98,10 @@ export function useGoogleDriveSync({
   mergeRemoteDocFiles,
   onLocalChange,
   showToast,
+  /** 雲端拉取合併並上傳成功後（含手動同步／登入後同步） */
+  onCloudSyncSuccess,
+  /** 與 state.signedIn 同步更新（供 painter 在 token 回呼當下即關閉本機 JSON 寫入） */
+  mirrorSignedInRef = null,
 }) {
   let tokenClient = null
   let accessToken = ''
@@ -120,6 +124,11 @@ export function useGoogleDriveSync({
     status: GOOGLE_CLIENT_ID ? '未登入 Google Drive' : '尚未設定 Google Drive',
     lastSyncedAt: null,
   })
+
+  function setSignedIn(value) {
+    state.signedIn = value
+    if (mirrorSignedInRef) mirrorSignedInRef.value = value
+  }
 
   const statusLabel = computed(() => {
     if (!state.configured) return '雲端未設定'
@@ -160,7 +169,7 @@ export function useGoogleDriveSync({
           return
         }
         accessToken = response.access_token || ''
-        state.signedIn = Boolean(accessToken)
+        setSignedIn(Boolean(accessToken))
         if (!accessToken) {
           reject(new Error('沒有取得 Google 授權權杖'))
           return
@@ -183,7 +192,7 @@ export function useGoogleDriveSync({
     const response = await fetch(path, { ...options, headers })
     if (response.status === 401) {
       accessToken = ''
-      state.signedIn = false
+      setSignedIn(false)
     }
     if (!response.ok) {
       let message = response.statusText
@@ -379,22 +388,19 @@ export function useGoogleDriveSync({
     await ensureDriveFolder()
     await migrateLegacySessionIfNeeded(folderId)
     await refreshKdFileIndex(folderId)
-    const fid = folderId
-    const files = await listFolderJsonFiles(fid)
 
-    /** 若仍存在 legacy（異常）：再嘗試遷移 */
-    if (files.some(f => f.name === LEGACY_SESSION_NAME)) {
-      migrateLegacyRan = false
-      await migrateLegacySessionIfNeeded(fid)
-    }
-
-    const kdOnly = files.filter(f => f.name !== LEGACY_SESSION_NAME && /\.json$/i.test(f.name))
+    /**
+     * 比對 appProperties 的 updatedAt 與上次下載的快取值，
+     * 只下載「雲端確實更新過」的檔案，避免每次 poll 都全量下載。
+     */
     const bodies = []
-    for (const f of kdOnly) {
+    for (const [docId, fileId] of driveFileIds) {
+      const remoteUt = driveRemoteUpdatedAt.get(docId) ?? 0
+      const cachedUt = remoteJsonUpdatedAt.get(docId) ?? 0
+      if (remoteUt <= cachedUt) continue
       try {
-        const j = await downloadFileJson(f.id)
-        const fromFile = parseDocIdFromDriveFile(f)
-        if (j?.v === 2 && j.id && (!fromFile || fromFile === j.id)) {
+        const j = await downloadFileJson(fileId)
+        if (j?.v === 2 && j.id) {
           const rut = typeof j.updatedAt === 'number' && Number.isFinite(j.updatedAt) ? j.updatedAt : 0
           remoteJsonUpdatedAt.set(j.id, Math.max(remoteJsonUpdatedAt.get(j.id) ?? 0, rut))
           bodies.push(j)
@@ -404,8 +410,8 @@ export function useGoogleDriveSync({
 
     if (bodies.length && typeof mergeRemoteDocFiles === 'function') {
       await mergeRemoteDocFiles(bodies)
+      await refreshKdFileIndex(folderId)
     }
-    await refreshKdFileIndex(folderId)
   }
 
   async function deleteDriveDoc(docId) {
@@ -469,6 +475,9 @@ export function useGoogleDriveSync({
       await pushAllLocalDocsQuiet()
       startPolling()
       setIdle('Google Drive 已同步')
+      try {
+        onCloudSyncSuccess?.()
+      } catch (_) {}
       if (!quiet) showToast?.('已與 Google Drive（KDrawer 資料夾）同步')
     } catch (error) {
       setIdle('同步失敗')
@@ -499,7 +508,7 @@ export function useGoogleDriveSync({
       window.google.accounts.oauth2.revoke(accessToken, () => {})
     }
     accessToken = ''
-    state.signedIn = false
+    setSignedIn(false)
     folderId = ''
     driveFileIds = new Map()
     driveRemoteUpdatedAt = new Map()
