@@ -16,6 +16,10 @@ const GIS_SCRIPT_POLL_MS = 50
 const GIS_SCRIPT_POLL_MAX = 200
 /** OAuth 彈窗若未回呼（關閉視窗、阻擋彈窗）會永遠 pending，須逾時 */
 const OAUTH_CALLBACK_TIMEOUT_MS = 180000
+/** 重新整理後還原登入；與 access_token 過期時間一併儲存（XSS 風險與一般 SPA token 相同） */
+const OAUTH_STORAGE_KEY = 'kdrawer-gdrive-oauth-v1'
+/** 比對 token 過期時提早更新，避免邊界秒數送 API 失敗 */
+const TOKEN_EXPIRY_SKEW_MS = 60_000
 
 
 function waitForGoogleAccountsScript() {
@@ -147,6 +151,8 @@ export function useGoogleDriveSync({
 }) {
   let tokenClient = null
   let accessToken = ''
+  /** access_token 預估過期時間（毫秒 epoch）；來自 OAuth 回應 expires_in */
+  let tokenExpiresAt = 0
   let folderId = ''
   /** docId → Drive file id */
   let driveFileIds = new Map()
@@ -190,6 +196,45 @@ export function useGoogleDriveSync({
     state.status = status
   }
 
+  function readPersistedOAuth() {
+    if (!GOOGLE_CLIENT_ID) return null
+    try {
+      const raw = localStorage.getItem(OAUTH_STORAGE_KEY)
+      if (!raw) return null
+      const o = JSON.parse(raw)
+      if (o?.v !== 1 || o.clientId !== GOOGLE_CLIENT_ID) return null
+      if (typeof o.accessToken !== 'string' || !o.accessToken) return null
+      if (typeof o.expiresAt !== 'number' || !Number.isFinite(o.expiresAt)) return null
+      return { accessToken: o.accessToken, expiresAt: o.expiresAt }
+    } catch (_) {
+      return null
+    }
+  }
+
+  function clearPersistedOAuth() {
+    try {
+      localStorage.removeItem(OAUTH_STORAGE_KEY)
+    } catch (_) {}
+  }
+
+  function persistOAuthSession(token, expiresInSec) {
+    if (!GOOGLE_CLIENT_ID || !token) return
+    const ei = Number(expiresInSec)
+    const expiresIn = Number.isFinite(ei) && ei > 0 ? ei : 3600
+    tokenExpiresAt = Date.now() + expiresIn * 1000
+    try {
+      localStorage.setItem(
+        OAUTH_STORAGE_KEY,
+        JSON.stringify({
+          v: 1,
+          clientId: GOOGLE_CLIENT_ID,
+          accessToken: token,
+          expiresAt: tokenExpiresAt,
+        }),
+      )
+    } catch (_) {}
+  }
+
   async function initTokenClient() {
     if (!state.configured) throw new Error('尚未設定 VITE_GOOGLE_CLIENT_ID')
     if (tokenClient) return tokenClient
@@ -229,6 +274,8 @@ export function useGoogleDriveSync({
           return
         }
         accessToken = response.access_token || ''
+        if (accessToken) persistOAuthSession(accessToken, response.expires_in)
+        else tokenExpiresAt = 0
         setSignedIn(Boolean(accessToken))
         if (!accessToken) {
           finish(reject, new Error('沒有取得 Google 授權權杖'))
@@ -241,7 +288,24 @@ export function useGoogleDriveSync({
   }
 
   async function ensureAccessToken(prompt = '') {
-    if (accessToken) return accessToken
+    const now = Date.now()
+    if (accessToken && now < tokenExpiresAt - TOKEN_EXPIRY_SKEW_MS) return accessToken
+
+    if (accessToken) {
+      accessToken = ''
+      tokenExpiresAt = 0
+    }
+
+    const stored = readPersistedOAuth()
+    if (stored && now < stored.expiresAt - TOKEN_EXPIRY_SKEW_MS) {
+      accessToken = stored.accessToken
+      tokenExpiresAt = stored.expiresAt
+      setSignedIn(true)
+      return accessToken
+    }
+
+    if (stored) clearPersistedOAuth()
+
     return requestAccessToken(prompt)
   }
 
@@ -252,6 +316,8 @@ export function useGoogleDriveSync({
     const response = await fetch(path, { ...options, headers })
     if (response.status === 401) {
       accessToken = ''
+      tokenExpiresAt = 0
+      clearPersistedOAuth()
       setSignedIn(false)
     }
     if (!response.ok) {
@@ -568,6 +634,8 @@ export function useGoogleDriveSync({
       window.google.accounts.oauth2.revoke(accessToken, () => {})
     }
     accessToken = ''
+    tokenExpiresAt = 0
+    clearPersistedOAuth()
     setSignedIn(false)
     folderId = ''
     driveFileIds = new Map()
@@ -582,8 +650,39 @@ export function useGoogleDriveSync({
     showToast?.('已登出 Google Drive，改為本機模式')
   }
 
+  /** 重新整理後：若 localStorage 仍有有效權杖，還原 signedIn 並拉一次雲端 */
+  async function restoreSessionIfPersisted() {
+    const stored = readPersistedOAuth()
+    if (!stored) return
+    const now = Date.now()
+    if (now >= stored.expiresAt - TOKEN_EXPIRY_SKEW_MS) {
+      clearPersistedOAuth()
+      return
+    }
+    accessToken = stored.accessToken
+    tokenExpiresAt = stored.expiresAt
+    setSignedIn(true)
+    try {
+      await ensureAccessToken('')
+      await ensureDriveFolder()
+      await migrateLegacySessionIfNeeded(folderId)
+      await fetchAndMergeKdFilesQuiet()
+      await pushAllLocalDocsQuiet()
+      startPolling()
+      state.lastSyncedAt = new Date()
+      state.status = 'Google Drive 已同步'
+      try {
+        onCloudSyncSuccess?.()
+      } catch (_) {}
+    } catch (_) {
+      state.status = '已登入 Google Drive'
+      startPolling()
+    }
+  }
+
   onMounted(() => {
     unsubscribeLocalChange = onLocalChange?.(() => schedulePushAll()) || null
+    if (state.configured) void restoreSessionIfPersisted()
   })
 
   onUnmounted(() => {
