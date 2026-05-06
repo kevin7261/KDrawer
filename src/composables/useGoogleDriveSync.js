@@ -9,7 +9,8 @@ const DRIVE_FOLDER_NAME = 'KDrawer'
 /** 舊版整包 session；會在首次同步時拆分為多分頁檔並刪除 */
 const LEGACY_SESSION_NAME = 'kdrawer-session.json'
 const POLL_INTERVAL_MS = 12000
-const UPLOAD_DEBOUNCE_MS = 1600
+/** 畫布每次持久化後會觸發上傳；極短 debounce 以合併同一幀內多次 persist */
+const UPLOAD_DEBOUNCE_MS = 200
 
 
 function waitForGoogleAccountsScript() {
@@ -130,6 +131,7 @@ export function useGoogleDriveSync({
           reject(new Error('沒有取得 Google 授權權杖'))
           return
         }
+        resolve(accessToken)
       }
       client.requestAccessToken({ prompt })
     })
@@ -358,14 +360,11 @@ export function useGoogleDriveSync({
       uploadTimer = null
       void (async () => {
         try {
-          setBusy('同步雲端…')
           await ensureAccessToken('')
-          await fetchAndMergeKdFilesQuiet()
+          /** 本機改動：僅上傳；遠端更新由輪詢 pull */
           await pushAllLocalDocsQuiet()
-          setIdle('已同步 Google Drive')
-        } catch (_) {
-          setIdle('同步失敗')
-        }
+          state.lastSyncedAt = new Date()
+        } catch (_) { /* 權杖／網路 */}
       })()
     }, UPLOAD_DEBOUNCE_MS)
   }
@@ -414,6 +413,7 @@ export function useGoogleDriveSync({
     migrateLegacyRan = false
     try {
       await requestAccessToken('consent')
+      setBusy('同步 Google Drive 中…')
       await syncNow({ quiet: true })
       showToast?.('已登入並同步 Google Drive')
     } catch (error) {
@@ -431,6 +431,7 @@ export function useGoogleDriveSync({
     folderId = ''
     driveFileIds = new Map()
     migrateLegacyRan = false
+    if (pollTimer) clearInterval(pollTimer)
     pollTimer = null
     if (uploadTimer) clearTimeout(uploadTimer)
     uploadTimer = null

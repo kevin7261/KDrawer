@@ -236,6 +236,7 @@
                   type="button"
                   class="doc-tab__main px-3 py-2"
                   role="tab"
+                  :title="doc.title"
                   :aria-selected="i === activeDocIndex"
                   @click="switchToDocument(i)"
                 >{{ doc.title }}</button>

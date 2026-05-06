@@ -254,7 +254,7 @@ export function usePainter({
   // ── Document management ───────────────────────────────────────────────────
   function formatDefaultDocTitle() {
     const n = new Date()
-    const y = String(n.getFullYear()).slice(-2)
+    const y = String(n.getFullYear())
     const mo = String(n.getMonth() + 1).padStart(2, '0')
     const da = String(n.getDate()).padStart(2, '0')
     const h = String(n.getHours()).padStart(2, '0')
@@ -311,8 +311,12 @@ export function usePainter({
     sessionSaveTimer = setTimeout(() => {
       sessionSaveTimer = null
       flushSessionPersistence()
-      localChangeCallbacks.forEach(fn => { try { fn() } catch (_) {} })
     }, 220)
+  }
+
+  /** persistActiveDocument 後立即呼叫（見下文）；sessionStorage 仍由上方 timer debounce */
+  function emitLocalChangeForSync() {
+    localChangeCallbacks.forEach(fn => { try { fn() } catch (_) {} })
   }
 
   function flushSessionPersistence() {
@@ -403,6 +407,7 @@ export function usePainter({
     d.canvasSnapshot = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
     d.history = history.map(h => cloneImageData(h)).filter(Boolean)
     if (!sessionFlushInProgress) scheduleSessionPersistence()
+    emitLocalChangeForSync()
   }
 
   function normalizeDocLogicalSize(d) {
