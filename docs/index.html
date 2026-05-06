@@ -9,21 +9,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=Noto+Sans+TC:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <!-- Pages 若用 repo 根目錄發布會載入本頁並請求 /src/main.js（404）。在解析 body 的 module 前先依路徑轉到已建置的 /KDrawer/docs/ -->
+  <script>
+    (function () {
+      try {
+        if (!/github\.io$/i.test(location.hostname || '')) return
+        var p = location.pathname || ''
+        if (!/^\/KDrawer\/?$/.test(p)) return
+        location.replace('/KDrawer/docs/' + (location.search || '') + (location.hash || ''))
+      } catch (e) {}
+    })()
+  </script>
   <script type="module" crossorigin src="./assets/index-DKT_vfMO.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-D-dXRBRl.css">
 </head>
 <body>
   <div id="app"></div>
-  <script>
-    (function () {
-      if (!/github\.io$/i.test(location.hostname || '')) return
-      var el = document.querySelector('script[type="module"][src*="src/main"]')
-      var raw = el && el.getAttribute('src')
-      if (!raw) return
-      if (location.pathname.indexOf('/docs') >= 0) return
-      if (location.pathname.indexOf('/KDrawer') !== 0) return
-      location.replace('/KDrawer/docs/' + location.search + location.hash)
-    })()
-  </script>
 </body>
 </html>
