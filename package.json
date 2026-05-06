@@ -7,7 +7,7 @@
     "serve": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build"
+    "deploy": "npm run build && node scripts/push-docs.mjs"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",

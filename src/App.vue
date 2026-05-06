@@ -480,8 +480,8 @@ const {
   max-width: 14ch;
 }
 .control-bar.kd-toolbar .kd-drive-btn--signin {
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
   white-space: nowrap;
   flex-shrink: 0;
 }
