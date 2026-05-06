@@ -1,3 +1,4 @@
+# Pages: Settings → Build and deployment → Source = "GitHub Actions" (recommended), or branch "main" + folder "/docs".
 name: Deploy GitHub Pages
 
 on:
