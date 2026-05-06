@@ -15,6 +15,7 @@ export function usePainter({
   customSizeOption,
   showConfirm,
   showToast,
+  onCloseDocument = null,
 }) {
   // ── Internal non-reactive state ───────────────────────────────────────────
   let ctx = null
@@ -251,6 +252,17 @@ export function usePainter({
   }
 
   // ── Document management ───────────────────────────────────────────────────
+  function formatDefaultDocTitle() {
+    const n = new Date()
+    const y = String(n.getFullYear()).slice(-2)
+    const mo = String(n.getMonth() + 1).padStart(2, '0')
+    const da = String(n.getDate()).padStart(2, '0')
+    const h = String(n.getHours()).padStart(2, '0')
+    const mi = String(n.getMinutes()).padStart(2, '0')
+    const s = String(n.getSeconds()).padStart(2, '0')
+    return `${y}-${mo}-${da} ${h}:${mi}:${s}`
+  }
+
   function genDocId() {
     return 'doc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
   }
@@ -319,6 +331,7 @@ export function usePainter({
           useViewportSize: d.useViewportSize,
           logicalW: d.logicalW,
           logicalH: d.logicalH,
+          updatedAt: typeof d.updatedAt === 'number' && Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
           png: d.canvasSnapshot ? imageDataToPngDataURL(d.canvasSnapshot) : null,
         })),
       }
@@ -357,6 +370,7 @@ export function usePainter({
           useViewportSize: !!row.useViewportSize,
           logicalW: row.logicalW,
           logicalH: row.logicalH,
+          updatedAt: typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
           canvasSnapshot,
           history: [],
         })
@@ -385,6 +399,7 @@ export function usePainter({
     d.zoomScale = zoomScale
     d.logicalW = logicalW.value
     d.logicalH = logicalH.value
+    d.updatedAt = Date.now()
     d.canvasSnapshot = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
     d.history = history.map(h => cloneImageData(h)).filter(Boolean)
     if (!sessionFlushInProgress) scheduleSessionPersistence()
@@ -520,7 +535,6 @@ export function usePainter({
   function addDocument() {
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
-    const nextNum = documents.value.length + 1
     const vp = canvasSizePresetValue.value === CANVAS_VIEWPORT_OPTION
     let nw, nh, useVp
     if (vp) {
@@ -533,10 +547,10 @@ export function usePainter({
       useVp = false
     }
     documents.value.push({
-      id: genDocId(), title: '分頁 ' + nextNum,
+      id: genDocId(), title: formatDefaultDocTitle(),
       zoomScale: 1, useViewportSize: useVp,
       logicalW: nw, logicalH: nh,
-      canvasSnapshot: null, history: [],
+      canvasSnapshot: null, history: [], updatedAt: Date.now(),
     })
     activeDocIndex.value = documents.value.length - 1
     logicalW.value = nw; logicalH.value = nh
@@ -552,6 +566,7 @@ export function usePainter({
     if (documents.value.length <= 1) { showToast('至少保留一個分頁'); return }
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
+    const closedId = documents.value[closeIdx]?.id
     const wasActive = closeIdx === activeDocIndex.value
     documents.value.splice(closeIdx, 1)
     if (wasActive) {
@@ -561,6 +576,7 @@ export function usePainter({
     }
     loadDocumentAt(activeDocIndex.value)
     applyCanvasDisplaySize()
+    try { typeof onCloseDocument === 'function' && closedId && onCloseDocument(closedId) } catch (_) {}
   }
 
   // ── Drawing utilities ─────────────────────────────────────────────────────
@@ -883,9 +899,9 @@ export function usePainter({
       } else {
         const avInit = getCanvasWrapAvailPx()
         documents.value = [{
-          id: genDocId(), title: '分頁 1', zoomScale: 1,
+          id: genDocId(), title: formatDefaultDocTitle(), zoomScale: 1,
           useViewportSize: true, logicalW: avInit.w, logicalH: avInit.h,
-          canvasSnapshot: null, history: [],
+          canvasSnapshot: null, history: [], updatedAt: Date.now(),
         }]
         activeDocIndex.value = 0
       }
@@ -1045,6 +1061,7 @@ export function usePainter({
           useViewportSize: !!row.useViewportSize,
           logicalW: row.logicalW,
           logicalH: row.logicalH,
+          updatedAt: typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
           canvasSnapshot,
           history: [],
         })
@@ -1061,6 +1078,85 @@ export function usePainter({
     }
   }
 
+  async function rowFromRemotePayload(row) {
+    let canvasSnapshot = null
+    if (row.png && typeof row.png === 'string') canvasSnapshot = await pngDataUrlToImageData(row.png)
+    const updatedAt = typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : 0
+    return {
+      id: typeof row.id === 'string' ? row.id : genDocId(),
+      title: typeof row.title === 'string' ? row.title : formatDefaultDocTitle(),
+      zoomScale: typeof row.zoomScale === 'number' && Number.isFinite(row.zoomScale) ? row.zoomScale : 1,
+      useViewportSize: !!row.useViewportSize,
+      logicalW: row.logicalW,
+      logicalH: row.logicalH,
+      canvasSnapshot,
+      history: [],
+      updatedAt,
+    }
+  }
+
+  function snapshotLocalDoc(d) {
+    const lu = typeof d.updatedAt === 'number' && Number.isFinite(d.updatedAt) ? d.updatedAt : 0
+    return {
+      id: d.id,
+      title: d.title,
+      zoomScale: d.zoomScale,
+      useViewportSize: d.useViewportSize,
+      logicalW: d.logicalW,
+      logicalH: d.logicalH,
+      canvasSnapshot: d.canvasSnapshot ? cloneImageData(d.canvasSnapshot) : null,
+      history: (d.history || []).map(h => cloneImageData(h)).filter(Boolean),
+      updatedAt: lu,
+    }
+  }
+
+  /**
+   * Dropbox 式：依每個 json 的 updatedAt，較新者覆蓋；雲端多出的分頁會 append。
+   */
+  async function mergeRemoteDocFiles(remoteBodies) {
+    if (!Array.isArray(remoteBodies) || remoteBodies.length === 0) return false
+    persistActiveDocument()
+    flushSessionPersistenceSync()
+
+    const remoteById = new Map()
+    for (const body of remoteBodies) {
+      if (!body || body.v !== 2 || typeof body.id !== 'string') continue
+      remoteById.set(body.id, body)
+    }
+    if (remoteById.size === 0) return false
+
+    const processed = []
+    for (const d of [...documents.value]) {
+      const R = remoteById.get(d.id)
+      remoteById.delete(d.id)
+      const lu = typeof d.updatedAt === 'number' && Number.isFinite(d.updatedAt) ? d.updatedAt : 0
+      const ru = R ? (typeof R.updatedAt === 'number' && Number.isFinite(R.updatedAt) ? R.updatedAt : 0) : -1
+      if (R && ru > lu) {
+        processed.push(await rowFromRemotePayload(R))
+      } else {
+        processed.push(snapshotLocalDoc(d))
+      }
+    }
+
+    for (const R of remoteById.values()) {
+      processed.push(await rowFromRemotePayload(R))
+    }
+
+    try {
+      endStroke(); dragShape = null; drawing = false
+      documents.value = processed
+      activeDocIndex.value = Math.min(activeDocIndex.value, Math.max(0, documents.value.length - 1))
+      loadDocumentAt(activeDocIndex.value)
+      syncCanvasSizeSelect()
+      applyCanvasDisplaySize()
+      flushSessionPersistenceSync()
+      return true
+    } catch (e) {
+      showToast('套用雲端資料失敗：' + (e?.message || '未知錯誤'))
+      return false
+    }
+  }
+
   function onLocalChange(fn) {
     localChangeCallbacks.push(fn)
     return () => {
@@ -1074,6 +1170,6 @@ export function usePainter({
     undo, clearCanvas, savePng, copyCanvasPng, copyCanvasPngDrawnBounds,
     switchToDocument, addDocument, closeDocumentAt,
     handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
-    getPayload, applyPayload, onLocalChange,
+    getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
   }
 }

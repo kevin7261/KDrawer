@@ -3,13 +3,13 @@
 
     <!-- ── 頂部控制列 ── -->
     <header
-      class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100"
+      class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100 py-2 px-3"
       aria-label="控制列"
     >
       <!-- Google Drive：已設定時僅「登入」或「登出」一鍵 -->
       <template v-if="!driveState.configured">
         <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0" role="region" aria-label="雲端同步">
-          <span class="kd-drive-status kd-drive-status--off" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
+          <span class="kd-drive-status kd-drive-status--off d-inline-flex align-items-center gap-1" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
             <span class="kd-drive-label">雲端未設定</span>
           </span>
         </div>
@@ -20,7 +20,7 @@
           <button
             v-if="!driveState.signedIn"
             type="button"
-            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent kd-drive-btn kd-drive-btn--signin"
+            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent px-3 text-nowrap flex-shrink-0"
             :disabled="driveState.busy"
             title="使用 Google 帳號登入，啟用雲端同步"
             :aria-label="driveState.busy ? '登入中' : '登入雲端'"
@@ -31,7 +31,7 @@
           <button
             v-else
             type="button"
-            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger kd-drive-btn kd-drive-btn--signin"
+            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger px-3 text-nowrap flex-shrink-0"
             :disabled="driveState.busy"
             title="登出 Google Drive（改為僅本機）"
             aria-label="登出雲端"
@@ -45,27 +45,27 @@
 
       <!-- 動作群組 -->
       <div class="btn-group btn-group-sm" role="group" aria-label="剪貼簿與檔案">
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-action btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action btn-icon-tiny p-0"
           title="復原上一步繪圖（可多次）"
           @click="undo" aria-label="復原">
           <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny p-0"
           title="將整張畫布複製為 PNG 到剪貼簿"
           @click="copyCanvasPng" aria-label="複製 PNG">
           <i class="fa-solid fa-copy" aria-hidden="true"></i>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny p-0"
           title="只複製有內容的範圍（裁切邊界）為 PNG"
           @click="copyCanvasPngDrawnBounds" aria-label="複製繪製範圍 PNG">
           <i class="fa-solid fa-crop-simple" aria-hidden="true"></i>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny p-0"
           title="下載目前畫布為 PNG 檔"
           @click="savePng" aria-label="另存新檔">
           <i class="fa-solid fa-download" aria-hidden="true"></i>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger btn-icon-tiny p-0"
           title="清空畫布內容（會先確認）"
           @click="clearCanvas" aria-label="清空畫布">
           <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
@@ -76,7 +76,7 @@
 
       <!-- 繪圖工具 -->
       <nav
-        class="control-bar__tools kd-tool-well d-flex flex-wrap flex-shrink-0 align-items-center"
+        class="control-bar__tools kd-tool-well d-flex flex-wrap flex-shrink-0 align-items-center gap-2 px-2 py-2"
         role="toolbar"
         aria-label="繪圖工具"
       >
@@ -84,7 +84,7 @@
           v-for="t in TOOLS"
           :key="t.value"
           type="button"
-          :class="['btn', 'btn-sm', 'btn-outline-light', 'ctrl-tool', 'btn-icon-tiny', { active: tool === t.value }]"
+          :class="['btn', 'btn-sm', 'btn-outline-light', 'ctrl-tool', 'btn-icon-tiny', 'p-0', { active: tool === t.value }]"
           :title="t.label"
           :aria-label="t.label"
           @click="tool = t.value"
@@ -97,7 +97,7 @@
 
       <!-- 縮放 -->
       <div class="btn-group btn-group-sm ctrl-zoom-group" role="group" aria-label="畫布縮放">
-        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny"
+        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny p-0"
           title="縮小畫布顯示"
           @click="zoomOut" aria-label="縮小">
           <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
@@ -107,7 +107,7 @@
           @click="zoomReset" aria-label="縮放比例，點擊重設">
           {{ zoomLabel }}
         </button>
-        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny"
+        <button type="button" class="btn btn-sm ctrl-zoom-btn btn-icon-tiny p-0"
           title="放大畫布顯示"
           @click="zoomIn" aria-label="放大">
           <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
@@ -166,7 +166,7 @@
         <div class="color-overlap-wrap">
           <button
             type="button"
-            class="color-rear"
+            class="color-rear p-0"
             :class="{ active: activeColorSlot === 2 }"
             :style="{ background: color2 }"
             title="背景色：橡皮擦與右鍵繪製使用此色；點擊以編輯"
@@ -175,7 +175,7 @@
           ></button>
           <button
             type="button"
-            class="color-front"
+            class="color-front p-0"
             :class="{ active: activeColorSlot === 1 }"
             :style="{ background: color1 }"
             title="前景色：一般左鍵繪製與填色使用；點擊以編輯"
@@ -184,7 +184,7 @@
           ></button>
         </div>
 
-        <button type="button" class="btn btn-sm btn-outline-light ctrl-icon-btn btn-icon-tiny"
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-icon-btn btn-icon-tiny p-0"
           title="交換前景色與背景色"
           @click="swapColors" aria-label="交換色彩">
           <i class="fa-solid fa-right-left" aria-hidden="true"></i>
@@ -196,14 +196,14 @@
           </span>
           <input
             type="color"
-            class="form-control form-control-color"
+            class="form-control form-control-color p-0 border-0"
             :value="colorPickerValue"
             @input="onColorPickerInput"
             aria-label="調整選取的色彩"
           />
         </label>
 
-        <div class="swatches d-flex flex-wrap align-items-center gap-1" aria-label="調色盤">
+        <div class="swatches d-flex flex-wrap align-items-center gap-1 py-1" aria-label="調色盤">
           <button
             v-for="hex in SWATCHES"
             :key="hex"
@@ -218,26 +218,30 @@
     </header>
 
     <!-- ── 分頁列 ── -->
-    <div class="doc-tab-strip w-100 overflow-hidden">
-      <div class="doc-tabs-scroll w-100">
-        <div class="doc-tabs-row w-100 flex-wrap">
-          <div class="doc-tabs-cluster">
-            <div class="doc-tabs" role="tablist" aria-label="分頁">
+    <div class="doc-tab-strip w-100 overflow-hidden flex-shrink-0">
+      <div class="doc-tabs-scroll w-100 overflow-visible px-3">
+        <div class="doc-tabs-row w-100 d-flex flex-wrap align-items-end align-content-end gap-2 pt-2">
+          <div class="doc-tabs-cluster d-flex flex-wrap align-items-end align-content-end gap-2">
+            <div
+              class="doc-tabs d-flex align-items-end flex-wrap gap-2 flex-grow-0 flex-shrink-1 mw-100 min-w-0"
+              role="tablist"
+              aria-label="分頁"
+            >
               <div
                 v-for="(doc, i) in documents"
                 :key="doc.id"
-                :class="['doc-tab', { 'doc-tab--active': i === activeDocIndex }]"
+                :class="['doc-tab', 'mb-n1', { 'doc-tab--active': i === activeDocIndex }]"
               >
                 <button
                   type="button"
-                  class="doc-tab__main"
+                  class="doc-tab__main px-3 py-2"
                   role="tab"
                   :aria-selected="i === activeDocIndex"
                   @click="switchToDocument(i)"
                 >{{ doc.title }}</button>
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-secondary border-0 doc-tab__close"
+                  class="btn btn-sm btn-outline-secondary border-0 doc-tab__close p-0 d-flex align-items-center justify-content-center ms-0 me-2 my-2"
                   :aria-label="'關閉「' + doc.title + '」'"
                   @click.stop="closeDocumentAt(i)"
                 >
@@ -247,7 +251,7 @@
             </div>
             <button
               type="button"
-              class="btn btn-sm btn-light border doc-tab-new"
+              class="btn btn-sm btn-light border doc-tab-new mb-n1 p-0 ms-0 d-inline-flex align-items-center justify-content-center"
               @click="addDocument"
               aria-label="新增分頁"
             >
@@ -259,7 +263,11 @@
     </div>
 
     <!-- ── 畫布區 ── -->
-    <main class="canvas-wrap overflow-hidden" ref="canvasWrapRef" aria-label="畫布區">
+    <main
+      class="canvas-wrap overflow-hidden p-0 d-flex align-items-center justify-content-center"
+      ref="canvasWrapRef"
+      aria-label="畫布區"
+    >
       <div class="canvas-pan-inner" ref="canvasPanLayerRef">
         <canvas ref="canvasRef" aria-label="畫布"></canvas>
       </div>
@@ -419,32 +427,39 @@ function showToast(message) {
   toastTimer = setTimeout(() => { toastState.visible = false }, 2800)
 }
 
+// ── Painter／雲端刪檔 shim（閉包避免 composable 循環引用） ─────────────────────
+const driveDeleteShim = { fn: (_id) => {} }
+
 // ── Painter composable ─────────────────────────────────────────────────────
 const {
   zoomLabel, cursorPt, documents, activeDocIndex,
   undo, clearCanvas, savePng, copyCanvasPng, copyCanvasPngDrawnBounds,
   switchToDocument, addDocument, closeDocumentAt,
   handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
-  getPayload, applyPayload, onLocalChange,
+  getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
 } = usePainter({
   canvasRef, canvasWrapRef, canvasPanLayerRef, appFooterRef,
   tool, brushSize, color1, color2, activeColorSlot,
   canvasSizePresetValue, customSizeOption,
   showConfirm, showToast,
+  onCloseDocument: id => driveDeleteShim.fn(id),
 })
 
-// ── Google Drive sync ──────────────────────────────────────────────────────
+// ── Google Drive sync ───────────────────────────────────────────────────────
 const {
   state: driveState,
   signIn: driveSignIn,
   signOut: driveSignOut,
+  deleteDriveDoc: driveDeleteDriveDoc,
 } = useGoogleDriveSync({
   getPayload,
   applyPayload,
+  mergeRemoteDocFiles,
   onLocalChange,
-  showConfirm,
   showToast,
 })
+driveDeleteShim.fn = driveDeleteDriveDoc
+
 </script>
 
 <style>
@@ -479,18 +494,6 @@ const {
 .control-bar.kd-toolbar .kd-drive-zone--toolbar .kd-drive-label {
   max-width: 14ch;
 }
-.control-bar.kd-toolbar .kd-drive-btn--signin {
-  padding-left: 1rem;
-  padding-right: 1rem;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.kd-drive-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2em;
-  opacity: 0.8;
-}
 .kd-drive-status--ok  { color: #4caf8a; }
 .kd-drive-status--off { color: #888; }
 .kd-drive-status--busy { color: #ffc107; }
@@ -499,16 +502,5 @@ const {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.kd-drive-btn {
-  padding: 0.1rem 0.45rem;
-  font-size: 0.75rem;
-  line-height: 1.4;
-}
-.btn-xs {
-  padding: 0.1rem 0.45rem;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  border-radius: 0.25rem;
 }
 </style>

@@ -6,10 +6,11 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const DRIVE_FOLDER_NAME = 'KDrawer'
-const DRIVE_FILE_NAME = 'kdrawer-session.json'
-const CONNECTED_KEY = 'kdrawer-google-drive-connected'
-const POLL_INTERVAL_MS = 30000
-const UPLOAD_DEBOUNCE_MS = 1800
+/** 舊版整包 session；會在首次同步時拆分為多分頁檔並刪除 */
+const LEGACY_SESSION_NAME = 'kdrawer-session.json'
+const POLL_INTERVAL_MS = 12000
+const UPLOAD_DEBOUNCE_MS = 1600
+
 
 function waitForGoogleAccountsScript() {
   if (window.google?.accounts?.oauth2) return Promise.resolve()
@@ -36,27 +37,46 @@ function escapeDriveQueryValue(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
-function getPayloadUpdatedAt(payload) {
-  const value = payload?.updatedAt
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+function docDriveName(docId) {
+  return `kd-${docId}.json`
+}
+
+function parseDocIdFromKdName(filename) {
+  const m = String(filename || '').match(kdFileRe)
+  return m ? m[1] : ''
+}
+
+/** v2：一個 json = 一個分頁 */
+function rowToDrivePayload(row) {
+  return {
+    v: 2,
+    id: row.id,
+    updatedAt: typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : Date.now(),
+    title: row.title,
+    zoomScale: row.zoomScale,
+    useViewportSize: !!row.useViewportSize,
+    logicalW: row.logicalW,
+    logicalH: row.logicalH,
+    png: row.png ?? null,
+  }
 }
 
 export function useGoogleDriveSync({
   getPayload,
   applyPayload,
+  mergeRemoteDocFiles,
   onLocalChange,
-  showConfirm,
   showToast,
 }) {
   let tokenClient = null
   let accessToken = ''
   let folderId = ''
-  let fileId = ''
-  let lastRemoteUpdatedAt = 0
+  /** docId → Drive file id */
+  let driveFileIds = new Map()
   let uploadTimer = null
   let pollTimer = null
   let unsubscribeLocalChange = null
-  let isApplyingRemote = false
+  let migrateLegacyRan = false
 
   const state = reactive({
     configured: Boolean(GOOGLE_CLIENT_ID),
@@ -110,8 +130,6 @@ export function useGoogleDriveSync({
           reject(new Error('沒有取得 Google 授權權杖'))
           return
         }
-        try { localStorage.setItem(CONNECTED_KEY, '1') } catch (_) {}
-        resolve(accessToken)
       }
       client.requestAccessToken({ prompt })
     })
@@ -150,7 +168,7 @@ export function useGoogleDriveSync({
   async function findDriveFolder() {
     const params = new URLSearchParams({
       q: `name='${escapeDriveQueryValue(DRIVE_FOLDER_NAME)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: 'files(id,name,modifiedTime)',
+      fields: 'files(id,name)',
       pageSize: '1',
     })
     const result = await driveJson(`${DRIVE_API_BASE}/files?${params}`)
@@ -158,7 +176,7 @@ export function useGoogleDriveSync({
   }
 
   async function createDriveFolder() {
-    return driveJson(`${DRIVE_API_BASE}/files?fields=id,name,modifiedTime`, {
+    return driveJson(`${DRIVE_API_BASE}/files?fields=id,name`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -176,25 +194,59 @@ export function useGoogleDriveSync({
     return folderId
   }
 
-  async function findSessionFile(parentFolderId) {
-    const params = new URLSearchParams({
-      q: `name='${escapeDriveQueryValue(DRIVE_FILE_NAME)}' and '${parentFolderId}' in parents and trashed=false`,
-      fields: 'files(id,name,modifiedTime)',
-      pageSize: '1',
-    })
-    const result = await driveJson(`${DRIVE_API_BASE}/files?${params}`)
-    return result.files?.[0] || null
+  async function listFolderJsonFiles(fid) {
+    const out = []
+    let pageToken = ''
+    for (;;) {
+      const qs = new URLSearchParams({
+        q: `'${fid}' in parents and mimeType='application/json' and trashed=false`,
+        fields: 'nextPageToken, files(id,name)',
+        pageSize: '100',
+      })
+      if (pageToken) qs.set('pageToken', pageToken)
+      const res = await driveJson(`${DRIVE_API_BASE}/files?${qs}`)
+      out.push(...(res.files || []))
+      pageToken = res.nextPageToken
+      if (!pageToken) break
+    }
+    return out
   }
 
-  async function ensureSessionFile() {
-    const parentFolderId = await ensureDriveFolder()
-    if (fileId) return fileId
-    const existing = await findSessionFile(parentFolderId)
-    if (existing) {
-      fileId = existing.id
-      return fileId
+  /** 重整 docId ↔ drive file id 對照 */
+  async function refreshKdFileIndex(fid) {
+    const files = await listFolderJsonFiles(fid)
+    const next = new Map()
+    for (const f of files) {
+      if (f.name === LEGACY_SESSION_NAME) continue
+      const docId = parseDocIdFromKdName(f.name)
+      if (docId) next.set(docId, f.id)
     }
-    return ''
+    driveFileIds = next
+  }
+
+  async function downloadFileJson(mediaFileId) {
+    const response = await driveFetch(`${DRIVE_API_BASE}/files/${mediaFileId}?alt=media`, {
+      headers: { Accept: 'application/json' },
+    })
+    return response.json()
+  }
+
+  async function migrateLegacySessionIfNeeded(fid) {
+    if (migrateLegacyRan) return
+    migrateLegacyRan = true
+    const files = await listFolderJsonFiles(fid)
+    const leg = files.find(f => f.name === LEGACY_SESSION_NAME)
+    if (!leg) return
+    try {
+      const payload = await downloadFileJson(leg.id)
+      if (payload?.v === 1 && Array.isArray(payload.documents)) {
+        await applyPayload(payload)
+      }
+      await driveFetch(`${DRIVE_API_BASE}/files/${leg.id}`, { method: 'DELETE' })
+    } catch (_) {
+      /* ignore */
+    }
+    await refreshKdFileIndex(fid)
   }
 
   function createMultipartBody(metadata, payload) {
@@ -218,76 +270,103 @@ export function useGoogleDriveSync({
     }
   }
 
-  async function uploadPayload(payload) {
-    const parentFolderId = await ensureDriveFolder()
-    await ensureSessionFile()
+  async function uploadDriveDoc(row) {
+    const fidFolder = await ensureDriveFolder()
+    await refreshKdFileIndex(fidFolder)
+    const name = docDriveName(row.id)
+    const existed = driveFileIds.get(row.id)
+    const body = rowToDrivePayload(row)
     const metadata = {
-      name: DRIVE_FILE_NAME,
+      name,
       mimeType: 'application/json',
-      ...(fileId ? {} : { parents: [parentFolderId] }),
+      ...(existed ? {} : { parents: [fidFolder] }),
     }
-    const multipart = createMultipartBody(metadata, payload)
-    const url = fileId
-      ? `${DRIVE_UPLOAD_BASE}/files/${fileId}?uploadType=multipart&fields=id,name,modifiedTime`
-      : `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart&fields=id,name,modifiedTime`
+    const multipart = createMultipartBody(metadata, body)
+    const url = existed
+      ? `${DRIVE_UPLOAD_BASE}/files/${existed}?uploadType=multipart&fields=id,name`
+      : `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart&fields=id,name`
     const result = await driveJson(url, {
-      method: fileId ? 'PATCH' : 'POST',
+      method: existed ? 'PATCH' : 'POST',
       headers: { 'Content-Type': multipart.contentType },
       body: multipart.body,
     })
-    fileId = result.id
-    lastRemoteUpdatedAt = getPayloadUpdatedAt(payload)
+    driveFileIds.set(row.id, result.id)
+  }
+
+  async function pushAllLocalDocsQuiet() {
+    const pl = typeof getPayload === 'function' ? getPayload() : null
+    if (!pl?.documents?.length) return
+    await ensureDriveFolder()
+    await migrateLegacySessionIfNeeded(folderId)
+    await refreshKdFileIndex(folderId)
+    for (const row of pl.documents) {
+      await uploadDriveDoc(row)
+    }
     state.lastSyncedAt = new Date()
-    return result
   }
 
-  async function downloadPayload() {
-    const remoteFileId = await ensureSessionFile()
-    if (!remoteFileId) return null
-    const response = await driveFetch(`${DRIVE_API_BASE}/files/${remoteFileId}?alt=media`, {
-      headers: { Accept: 'application/json' },
-    })
-    const payload = await response.json()
-    lastRemoteUpdatedAt = getPayloadUpdatedAt(payload)
-    return payload
-  }
+  async function fetchAndMergeKdFilesQuiet() {
+    await ensureDriveFolder()
+    await migrateLegacySessionIfNeeded(folderId)
+    await refreshKdFileIndex(folderId)
+    const fid = folderId
+    const files = (await listFolderJsonFiles(fid)).filter(f =>
+      kdFileRe.test(f.name) || f.name === LEGACY_SESSION_NAME,
+    )
 
-  async function pullIfRemoteIsNewer({ initial = false } = {}) {
-    const remote = await downloadPayload()
-    if (!remote) return false
-    const local = getPayload()
-    const remoteUpdatedAt = getPayloadUpdatedAt(remote)
-    const localUpdatedAt = getPayloadUpdatedAt(local)
-    if (!initial && remoteUpdatedAt <= localUpdatedAt) return false
-
-    let ok = true
-    if (!initial && remoteUpdatedAt > localUpdatedAt && typeof showConfirm === 'function') {
-      ok = await showConfirm('Google Drive 上有較新的 KDrawer 內容，要套用雲端版本嗎？')
+    /** 若仍存在 legacy（異常）：再嘗試遷移 */
+    if (files.some(f => f.name === LEGACY_SESSION_NAME)) {
+      migrateLegacyRan = false
+      await migrateLegacySessionIfNeeded(fid)
     }
-    if (!ok) return false
 
-    isApplyingRemote = true
+    const kdOnly = files.filter(f => kdFileRe.test(f.name))
+    const bodies = []
+    for (const f of kdOnly) {
+      try {
+        const j = await downloadFileJson(f.id)
+        if (j?.v === 2 && j.id && parseDocIdFromKdName(f.name) === j.id) bodies.push(j)
+      } catch (_) { /* skip */ }
+    }
+
+    if (bodies.length && typeof mergeRemoteDocFiles === 'function') {
+      await mergeRemoteDocFiles(bodies)
+    }
+    await refreshKdFileIndex(folderId)
+  }
+
+  async function deleteDriveDoc(docId) {
+    if (!state.signedIn || !docId) return
     try {
-      await applyPayload(remote)
-      lastRemoteUpdatedAt = remoteUpdatedAt
-      state.lastSyncedAt = new Date()
-      return true
-    } finally {
-      isApplyingRemote = false
+      await ensureAccessToken('')
+      const fidFolder = folderId || (await ensureDriveFolder())
+      await refreshKdFileIndex(fidFolder)
+      const fid = driveFileIds.get(docId)
+      if (fid) {
+        await driveFetch(`${DRIVE_API_BASE}/files/${fid}`, { method: 'DELETE' })
+        driveFileIds.delete(docId)
+      }
+    } catch (e) {
+      showToast?.('刪除雲端檔案失敗：' + (e?.message || '未知錯誤'))
     }
   }
 
-  async function pushLocalPayload() {
-    const payload = getPayload()
-    await uploadPayload(payload)
-  }
-
-  function scheduleUpload() {
-    if (!state.signedIn || isApplyingRemote) return
+  function schedulePushAll() {
+    if (!state.signedIn) return
     if (uploadTimer) clearTimeout(uploadTimer)
     uploadTimer = setTimeout(() => {
       uploadTimer = null
-      void syncNow({ quiet: true, preferUpload: true })
+      void (async () => {
+        try {
+          setBusy('同步雲端…')
+          await ensureAccessToken('')
+          await fetchAndMergeKdFilesQuiet()
+          await pushAllLocalDocsQuiet()
+          setIdle('已同步 Google Drive')
+        } catch (_) {
+          setIdle('同步失敗')
+        }
+      })()
     }, UPLOAD_DEBOUNCE_MS)
   }
 
@@ -295,37 +374,31 @@ export function useGoogleDriveSync({
     if (pollTimer) clearInterval(pollTimer)
     pollTimer = setInterval(() => {
       if (!state.signedIn || state.busy) return
-      void pullIfRemoteIsNewer().catch(() => {})
+      void (async () => {
+        try {
+          await fetchAndMergeKdFilesQuiet()
+          state.lastSyncedAt = new Date()
+        } catch (_) { /* off-line／權杖 */ }
+      })()
     }, POLL_INTERVAL_MS)
   }
 
-  async function syncNow({ quiet = false, preferUpload = false } = {}) {
+  async function syncNow({ quiet = false } = {}) {
     if (!state.configured) {
       showToast?.('請先設定 VITE_GOOGLE_CLIENT_ID')
       return
     }
     setBusy('同步 Google Drive 中…')
     try {
-      await ensureAccessToken('consent')
-      const remote = await downloadPayload()
-      if (!remote) {
-        await pushLocalPayload()
-      } else {
-        const local = getPayload()
-        const remoteUpdatedAt = getPayloadUpdatedAt(remote)
-        const localUpdatedAt = getPayloadUpdatedAt(local)
-        if (remoteUpdatedAt > localUpdatedAt && !preferUpload) {
-          isApplyingRemote = true
-          try { await applyPayload(remote) } finally { isApplyingRemote = false }
-          lastRemoteUpdatedAt = remoteUpdatedAt
-        } else if (localUpdatedAt > lastRemoteUpdatedAt || preferUpload) {
-          await uploadPayload(local)
-        }
-      }
-      state.lastSyncedAt = new Date()
+      await ensureAccessToken('')
+      await ensureDriveFolder()
+      await migrateLegacySessionIfNeeded(folderId)
+      /** 登入／手動同步：先把雲端拉下合併，再全部上傳本機快照 */
+      await fetchAndMergeKdFilesQuiet()
+      await pushAllLocalDocsQuiet()
       startPolling()
       setIdle('Google Drive 已同步')
-      if (!quiet) showToast?.('已同步到 Google Drive 的 KDrawer 資料夾')
+      if (!quiet) showToast?.('已與 Google Drive（KDrawer 資料夾）同步')
     } catch (error) {
       setIdle('同步失敗')
       if (!quiet) showToast?.('Google Drive 同步失敗：' + (error?.message || '未知錯誤'))
@@ -334,13 +407,15 @@ export function useGoogleDriveSync({
 
   async function signIn() {
     if (!state.configured) {
-      showToast?.('請在專案根目錄建立 .env，加入一行 VITE_GOOGLE_CLIENT_ID=你的 OAuth 用戶端 ID，存檔後重新執行 npm run dev（可參考 .env.example）')
+      showToast?.('請設定 VITE_GOOGLE_CLIENT_ID（見 .env / .env.production）')
       return
     }
     setBusy('等待 Google 授權…')
+    migrateLegacyRan = false
     try {
       await requestAccessToken('consent')
-      await syncNow()
+      await syncNow({ quiet: true })
+      showToast?.('已登入並同步 Google Drive')
     } catch (error) {
       setIdle('登入失敗')
       showToast?.('Google Drive 登入失敗：' + (error?.message || '未知錯誤'))
@@ -354,30 +429,17 @@ export function useGoogleDriveSync({
     accessToken = ''
     state.signedIn = false
     folderId = ''
-    fileId = ''
-    lastRemoteUpdatedAt = 0
-    try { localStorage.removeItem(CONNECTED_KEY) } catch (_) {}
-    if (pollTimer) clearInterval(pollTimer)
+    driveFileIds = new Map()
+    migrateLegacyRan = false
     pollTimer = null
+    if (uploadTimer) clearTimeout(uploadTimer)
+    uploadTimer = null
     setIdle('已登出 Google Drive')
     showToast?.('已登出 Google Drive，改為本機模式')
   }
 
   onMounted(() => {
-    unsubscribeLocalChange = onLocalChange?.(() => scheduleUpload()) || null
-    let shouldReconnect = false
-    try { shouldReconnect = localStorage.getItem(CONNECTED_KEY) === '1' } catch (_) {}
-    if (state.configured && shouldReconnect) {
-      void (async () => {
-        try {
-          setBusy('重新連線 Google Drive…')
-          await requestAccessToken('')
-          await syncNow({ quiet: true })
-        } catch (_) {
-          setIdle('需要重新登入')
-        }
-      })()
-    }
+    unsubscribeLocalChange = onLocalChange?.(() => schedulePushAll()) || null
   })
 
   onUnmounted(() => {
@@ -392,5 +454,6 @@ export function useGoogleDriveSync({
     signIn,
     signOut,
     syncNow,
+    deleteDriveDoc,
   }
 }

@@ -1,12 +1,11 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// build 輸出至 docs/；production 用相對路徑以利子路徑或 gh-pages 發佈。
+// build → docs/；GitHub Pages 專案站輸出為 /KDrawer/assets/...
 export default defineConfig(({ mode }) => ({
   plugins: [
     vue(),
     {
-      // repo 根 index 若被 Pages 發布會多此轉址；vite build 產出之 docs/index 不包含此段
       name: 'strip-gh-pages-root-redirect',
       apply: 'build',
       transformIndexHtml(html) {
@@ -17,7 +16,7 @@ export default defineConfig(({ mode }) => ({
       },
     },
   ],
-  base: mode === 'production' ? './' : '/',
+  base: mode === 'production' ? '/KDrawer/' : '/',
   build: {
     outDir: 'docs',
     emptyOutDir: true,
