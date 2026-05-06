@@ -6,6 +6,43 @@
       class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100"
       aria-label="控制列"
     >
+      <!-- Google Drive：已設定時僅「登入」或「登出」一鍵 -->
+      <template v-if="!driveState.configured">
+        <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0" role="region" aria-label="雲端同步">
+          <span class="kd-drive-status kd-drive-status--off" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
+            <span class="kd-drive-label">雲端未設定</span>
+          </span>
+        </div>
+        <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
+      </template>
+      <template v-else>
+        <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0" role="region" aria-label="雲端同步">
+          <button
+            v-if="!driveState.signedIn"
+            type="button"
+            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent kd-drive-btn kd-drive-btn--signin"
+            :disabled="driveState.busy"
+            title="使用 Google 帳號登入，啟用雲端同步"
+            :aria-label="driveState.busy ? '登入中' : '登入雲端'"
+            @click="driveSignIn()"
+          >
+            {{ driveState.busy ? '登入中' : '登入' }}
+          </button>
+          <button
+            v-else
+            type="button"
+            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger kd-drive-btn kd-drive-btn--signin"
+            :disabled="driveState.busy"
+            title="登出 Google Drive（改為僅本機）"
+            aria-label="登出雲端"
+            @click="driveSignOut()"
+          >
+            登出
+          </button>
+        </div>
+        <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
+      </template>
+
       <!-- 動作群組 -->
       <div class="btn-group btn-group-sm" role="group" aria-label="剪貼簿與檔案">
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action btn-icon-tiny"
@@ -236,62 +273,6 @@
           <span class="kd-footer-readout font-monospace user-select-all footer-cursor-val">{{ cursorPt }}</span>
         </div>
 
-        <!-- Google Drive 同步區 -->
-        <div class="d-flex align-items-center gap-2 kd-drive-zone">
-          <template v-if="driveState.configured">
-            <span
-              class="kd-drive-status text-nowrap"
-              :class="driveState.busy ? 'kd-drive-status--busy' : driveState.signedIn ? 'kd-drive-status--ok' : 'kd-drive-status--off'"
-              :title="driveStatusLabel"
-            >
-              <i
-                class="fa-brands fa-google-drive"
-                :class="driveState.busy ? 'fa-spin' : ''"
-                aria-hidden="true"
-              ></i>
-              <span class="kd-drive-label ms-1">{{ driveStatusLabel }}</span>
-            </span>
-
-            <template v-if="driveState.signedIn">
-              <button
-                type="button"
-                class="btn btn-xs btn-outline-secondary kd-drive-btn"
-                :disabled="driveState.busy"
-                title="立即同步 Google Drive"
-                @click="driveSyncNow()"
-              >
-                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-              </button>
-              <button
-                type="button"
-                class="btn btn-xs btn-outline-danger kd-drive-btn"
-                :disabled="driveState.busy"
-                title="登出 Google Drive"
-                @click="driveSignOut()"
-              >
-                <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
-              </button>
-            </template>
-
-            <button
-              v-else
-              type="button"
-              class="btn btn-xs btn-outline-primary kd-drive-btn"
-              :disabled="driveState.busy"
-              title="使用 Google 帳號登入，啟用雲端同步"
-              @click="driveSignIn()"
-            >
-              <i class="fa-brands fa-google" aria-hidden="true"></i>
-              <span class="ms-1">登入雲端</span>
-            </button>
-          </template>
-
-          <span v-else class="kd-drive-status kd-drive-status--off" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
-            <i class="fa-brands fa-google-drive" aria-hidden="true"></i>
-            <span class="kd-drive-label ms-1">雲端未設定</span>
-          </span>
-        </div>
-
         <span class="kd-footer-brand">KDrawer</span>
       </div>
     </footer>
@@ -455,10 +436,8 @@ const {
 // ── Google Drive sync ──────────────────────────────────────────────────────
 const {
   state: driveState,
-  statusLabel: driveStatusLabel,
   signIn: driveSignIn,
   signOut: driveSignOut,
-  syncNow: driveSyncNow,
 } = useGoogleDriveSync({
   getPayload,
   applyPayload,
@@ -487,9 +466,24 @@ const {
   opacity: 0;
 }
 
-/* ── Google Drive 狀態列 ── */
+/* ── Google Drive（工具列左上角） ── */
 .kd-drive-zone {
   font-size: 0.78rem;
+}
+.control-bar.kd-toolbar .kd-drive-zone--toolbar .kd-drive-status {
+  opacity: 0.92;
+}
+.control-bar.kd-toolbar .kd-drive-zone--toolbar .kd-drive-status--off {
+  color: var(--bar-muted);
+}
+.control-bar.kd-toolbar .kd-drive-zone--toolbar .kd-drive-label {
+  max-width: 14ch;
+}
+.control-bar.kd-toolbar .kd-drive-btn--signin {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .kd-drive-status {
   display: inline-flex;
