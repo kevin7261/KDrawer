@@ -38,13 +38,41 @@ function escapeDriveQueryValue(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
-function docDriveName(docId) {
-  return `kd-${docId}.json`
+const APP_PROP_DOC_ID = 'kdrawer_id'
+/** 舊版檔名：kd-{docId}.json */
+const KD_LEGACY_FILE_RE = /^kd-(.+)\.json$/i
+
+function sanitizeTitleForDriveFilename(title) {
+  let s = String(title ?? '').trim()
+  if (!s) s = 'untitled'
+  s = s.replace(/[/\\]/g, '-').replace(/[\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim()
+  s = s.replace(/^[\s.]+|[\s.]+$/g, '')
+  if (!s) s = 'untitled'
+  const max = 200
+  if (s.length > max) s = s.slice(0, max).trim()
+  return s
 }
 
-function parseDocIdFromKdName(filename) {
-  const m = String(filename || '').match(kdFileRe)
-  return m ? m[1] : ''
+/** 同一批上傳時避免「分頁同名」衝突 */
+function driveJsonFilenameForRow(row, usedNames) {
+  const base = sanitizeTitleForDriveFilename(row.title)
+  let name = `${base}.json`
+  if (usedNames.has(name)) {
+    const tail = String(row.id || '')
+      .replace(/^doc-/, '')
+      .slice(-12) || 'doc'
+    name = `${base} (${tail}).json`
+  }
+  usedNames.add(name)
+  return name
+}
+
+function parseDocIdFromDriveFile(f) {
+  const legacy = String(f?.name || '').match(KD_LEGACY_FILE_RE)
+  if (legacy) return legacy[1]
+  const ap = f?.appProperties
+  if (ap && typeof ap[APP_PROP_DOC_ID] === 'string' && ap[APP_PROP_DOC_ID]) return ap[APP_PROP_DOC_ID]
+  return ''
 }
 
 /** v2：一個 json = 一個分頁 */
@@ -202,7 +230,7 @@ export function useGoogleDriveSync({
     for (;;) {
       const qs = new URLSearchParams({
         q: `'${fid}' in parents and mimeType='application/json' and trashed=false`,
-        fields: 'nextPageToken, files(id,name)',
+        fields: 'nextPageToken, files(id,name,appProperties)',
         pageSize: '100',
       })
       if (pageToken) qs.set('pageToken', pageToken)
@@ -214,13 +242,13 @@ export function useGoogleDriveSync({
     return out
   }
 
-  /** 重整 docId ↔ drive file id 對照 */
+  /** 重整 docId ↔ drive file id（舊檔 kd-* 與 appProperties 並存） */
   async function refreshKdFileIndex(fid) {
     const files = await listFolderJsonFiles(fid)
     const next = new Map()
     for (const f of files) {
       if (f.name === LEGACY_SESSION_NAME) continue
-      const docId = parseDocIdFromKdName(f.name)
+      const docId = parseDocIdFromDriveFile(f)
       if (docId) next.set(docId, f.id)
     }
     driveFileIds = next
@@ -272,15 +300,16 @@ export function useGoogleDriveSync({
     }
   }
 
-  async function uploadDriveDoc(row) {
+  async function uploadDriveDoc(row, usedBaseNames) {
     const fidFolder = await ensureDriveFolder()
     await refreshKdFileIndex(fidFolder)
-    const name = docDriveName(row.id)
+    const name = driveJsonFilenameForRow(row, usedBaseNames)
     const existed = driveFileIds.get(row.id)
     const body = rowToDrivePayload(row)
     const metadata = {
       name,
       mimeType: 'application/json',
+      appProperties: { [APP_PROP_DOC_ID]: String(row.id) },
       ...(existed ? {} : { parents: [fidFolder] }),
     }
     const multipart = createMultipartBody(metadata, body)
@@ -301,8 +330,9 @@ export function useGoogleDriveSync({
     await ensureDriveFolder()
     await migrateLegacySessionIfNeeded(folderId)
     await refreshKdFileIndex(folderId)
+    const usedNames = new Set()
     for (const row of pl.documents) {
-      await uploadDriveDoc(row)
+      await uploadDriveDoc(row, usedNames)
     }
     state.lastSyncedAt = new Date()
   }
@@ -312,9 +342,7 @@ export function useGoogleDriveSync({
     await migrateLegacySessionIfNeeded(folderId)
     await refreshKdFileIndex(folderId)
     const fid = folderId
-    const files = (await listFolderJsonFiles(fid)).filter(f =>
-      kdFileRe.test(f.name) || f.name === LEGACY_SESSION_NAME,
-    )
+    const files = await listFolderJsonFiles(fid)
 
     /** 若仍存在 legacy（異常）：再嘗試遷移 */
     if (files.some(f => f.name === LEGACY_SESSION_NAME)) {
@@ -322,12 +350,13 @@ export function useGoogleDriveSync({
       await migrateLegacySessionIfNeeded(fid)
     }
 
-    const kdOnly = files.filter(f => kdFileRe.test(f.name))
+    const kdOnly = files.filter(f => f.name !== LEGACY_SESSION_NAME && /\.json$/i.test(f.name))
     const bodies = []
     for (const f of kdOnly) {
       try {
         const j = await downloadFileJson(f.id)
-        if (j?.v === 2 && j.id && parseDocIdFromKdName(f.name) === j.id) bodies.push(j)
+        const fromFile = parseDocIdFromDriveFile(f)
+        if (j?.v === 2 && j.id && (!fromFile || fromFile === j.id)) bodies.push(j)
       } catch (_) { /* skip */ }
     }
 

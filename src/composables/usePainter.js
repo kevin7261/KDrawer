@@ -217,6 +217,7 @@ export function usePainter({
 
     history.length = 0
     d.history = []
+    markActiveDocPixelDirty()
     persistActiveDocument()
     syncCanvasSizeSelect()
     syncZoomUi()
@@ -248,6 +249,7 @@ export function usePainter({
   function undo() {
     if (history.length === 0) return
     restoreSnapshot(history.pop())
+    markActiveDocPixelDirty()
     persistActiveDocument()
   }
 
@@ -303,6 +305,12 @@ export function usePainter({
       img.onerror = () => resolve(null)
       img.src = dataUrl
     })
+  }
+
+  /** emitLocalChangeForSync／雲端／updatedAt：僅當 pixelDirty 為 true（畫布像素有變）*/
+  function markActiveDocPixelDirty() {
+    const d = documents.value[activeDocIndex.value]
+    if (d) d.pixelDirty = true
   }
 
   function scheduleSessionPersistence() {
@@ -377,6 +385,7 @@ export function usePainter({
           updatedAt: typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
           canvasSnapshot,
           history: [],
+          pixelDirty: false,
         })
       }
       return { documents: restored, activeDocIndex: activeIdx }
@@ -396,6 +405,7 @@ export function usePainter({
     ctx.restore()
   }
 
+  /** persistActiveDocument：永遠更新目前分頁的 zoom／邏輯尺寸；快照與 cloud 只在 pixelDirty 時處理 */
   function persistActiveDocument() {
     const d = documents.value[activeDocIndex.value]
     if (!d || !ctx) return
@@ -403,11 +413,14 @@ export function usePainter({
     d.zoomScale = zoomScale
     d.logicalW = logicalW.value
     d.logicalH = logicalH.value
-    d.updatedAt = Date.now()
-    d.canvasSnapshot = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
-    d.history = history.map(h => cloneImageData(h)).filter(Boolean)
+    if (d.pixelDirty) {
+      d.updatedAt = Date.now()
+      d.canvasSnapshot = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
+      d.history = history.map(h => cloneImageData(h)).filter(Boolean)
+      d.pixelDirty = false
+      emitLocalChangeForSync()
+    }
     if (!sessionFlushInProgress) scheduleSessionPersistence()
-    emitLocalChangeForSync()
   }
 
   function normalizeDocLogicalSize(d) {
@@ -524,6 +537,7 @@ export function usePainter({
     fillCanvasWhiteNoHistory()
     history.length = 0
     dFixed.history = []; dFixed.canvasSnapshot = null
+    markActiveDocPixelDirty()
     persistActiveDocument()
     applyCanvasDisplaySize()
   }
@@ -556,6 +570,7 @@ export function usePainter({
       zoomScale: 1, useViewportSize: useVp,
       logicalW: nw, logicalH: nh,
       canvasSnapshot: null, history: [], updatedAt: Date.now(),
+      pixelDirty: true,
     })
     activeDocIndex.value = documents.value.length - 1
     logicalW.value = nw; logicalH.value = nh
@@ -564,6 +579,9 @@ export function usePainter({
     fillCanvasWhiteNoHistory()
     history.length = 0
     persistActiveDocument()
+    /** 必須立刻寫入 session 並通知雲端，否則 debounce 下 getPayload 可能尚未含新分頁 */
+    flushSessionPersistenceSync()
+    emitLocalChangeForSync()
     applyCanvasDisplaySize()
   }
 
@@ -793,6 +811,7 @@ export function usePainter({
       stack.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1])
     }
     ctx.putImageData(img, 0, 0)
+    markActiveDocPixelDirty()
   }
 
   // ── Public actions ────────────────────────────────────────────────────────
@@ -803,6 +822,7 @@ export function usePainter({
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
     ctx.restore()
+    markActiveDocPixelDirty()
     persistActiveDocument()
   }
 
@@ -907,6 +927,7 @@ export function usePainter({
           id: genDocId(), title: formatDefaultDocTitle(), zoomScale: 1,
           useViewportSize: true, logicalW: avInit.w, logicalH: avInit.h,
           canvasSnapshot: null, history: [], updatedAt: Date.now(),
+          pixelDirty: false,
         }]
         activeDocIndex.value = 0
       }
@@ -936,8 +957,10 @@ export function usePainter({
         e.preventDefault()
       })
       const onPointerUp = e => {
+        const drewOverlay = !!(dragShape || drawing)
         try { c.releasePointerCapture(e.pointerId) } catch (_) {}
         endStroke()
+        if (drewOverlay) markActiveDocPixelDirty()
         persistActiveDocument()
       }
       c.addEventListener('pointerup', onPointerUp)
@@ -1069,6 +1092,7 @@ export function usePainter({
           updatedAt: typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
           canvasSnapshot,
           history: [],
+          pixelDirty: false,
         })
       }
       endStroke(); dragShape = null; drawing = false
@@ -1097,6 +1121,7 @@ export function usePainter({
       canvasSnapshot,
       history: [],
       updatedAt,
+      pixelDirty: false,
     }
   }
 
@@ -1112,6 +1137,7 @@ export function usePainter({
       canvasSnapshot: d.canvasSnapshot ? cloneImageData(d.canvasSnapshot) : null,
       history: (d.history || []).map(h => cloneImageData(h)).filter(Boolean),
       updatedAt: lu,
+      pixelDirty: false,
     }
   }
 
