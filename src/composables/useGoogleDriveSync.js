@@ -596,7 +596,7 @@ export function useGoogleDriveSync({
     await ensureAccessToken('')
     const j = await downloadFileJson(fileId)
     if (j?.v === 2 && typeof j.id === 'string' && j.id && typeof mergeRemoteDocFiles === 'function') {
-      await mergeRemoteDocFiles([j])
+      await mergeRemoteDocFiles([j], { activateDocId: j.id })
       await refreshKdFileIndex(folderId || (await ensureDriveFolder()))
       return
     }

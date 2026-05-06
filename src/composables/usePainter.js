@@ -1273,8 +1273,9 @@ export function usePainter({
   /**
    * 與雲端 JSON 合併：同一 docId 比較 body.updatedAt，**較新者勝**；遠端僅在 ru > lu 時覆寫本機（同時刻平手保留本機）。
    * 雲端有、本機沒有的 id 會 append。
+   * @param {{ activateDocId?: string }} [opts] 若給定，合併後切到該 docId 分頁（例如從雲端匯入單檔）
    */
-  async function mergeRemoteDocFiles(remoteBodies) {
+  async function mergeRemoteDocFiles(remoteBodies, opts = {}) {
     if (!Array.isArray(remoteBodies) || remoteBodies.length === 0) return false
     persistActiveDocument()
     flushSessionPersistenceSync()
@@ -1306,7 +1307,10 @@ export function usePainter({
     try {
       endStroke(); dragShape = null; drawing = false
       documents.value = processed
-      activeDocIndex.value = Math.min(activeDocIndex.value, Math.max(0, documents.value.length - 1))
+      const wantId = typeof opts.activateDocId === 'string' ? opts.activateDocId : ''
+      const pickIdx = wantId ? processed.findIndex(d => d.id === wantId) : -1
+      if (pickIdx >= 0) activeDocIndex.value = pickIdx
+      else activeDocIndex.value = Math.min(activeDocIndex.value, Math.max(0, documents.value.length - 1))
       if (!documents.value.length) loadEmptyCanvasState()
       else loadDocumentAt(activeDocIndex.value)
       syncCanvasSizeSelect()
