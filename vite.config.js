@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// build → docs/；GitHub Pages 專案站輸出為 /KDrawer/assets/...
+// build → docs/；專案站網址 https://<user>.github.io/KDrawer/ → base 必須為 '/KDrawer/'
 export default defineConfig(({ mode }) => ({
   plugins: [
     vue(),

@@ -1,11 +1,8 @@
-# 靜態站以 main 的 docs/ 為準：本機執行 `npm run deploy` 會 build 後 commit + push docs/。
+# 本 workflow：驗證 PR／push 能成功 build（讀取 repo 內 .env.production 的 VITE_GOOGLE_CLIENT_ID）。
 #
-# GitHub Pages（擇一，建議用 branch + /docs）：
-# Settings → Pages → Build and deployment → Source：Deploy from a branch
-# → Branch: main，Folder: /docs
-#
-# 若仍使用「GitHub Actions」作為 Pages 來源，會與 main/docs 重疊；請只保留一種。
-# 本 workflow 僅在 CI 驗證能成功 build（可搭配 Repository secret VITE_GOOGLE_CLIENT_ID）。
+# 線上網址：https://kevin7261.github.io/KDrawer/
+# 發佈：請用「Deploy GitHub Pages」workflow（Settings → Pages → Source：GitHub Actions），
+# 或改為只從 branch main 的 /docs 資料夾發佈（兩者擇一，勿同時啟用）。
 name: CI
 
 on:
@@ -36,5 +33,3 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
