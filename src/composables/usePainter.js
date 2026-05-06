@@ -1142,7 +1142,8 @@ export function usePainter({
   }
 
   /**
-   * Dropbox 式：依每個 json 的 updatedAt，較新者覆蓋；雲端多出的分頁會 append。
+   * 與雲端 JSON 合併：同一 docId 比較 body.updatedAt，**較新者勝**；遠端僅在 ru > lu 時覆寫本機（同時刻平手保留本機）。
+   * 雲端有、本機沒有的 id 會 append。
    */
   async function mergeRemoteDocFiles(remoteBodies) {
     if (!Array.isArray(remoteBodies) || remoteBodies.length === 0) return false

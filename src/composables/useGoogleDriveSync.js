@@ -39,6 +39,8 @@ function escapeDriveQueryValue(value) {
 }
 
 const APP_PROP_DOC_ID = 'kdrawer_id'
+/** 與 JSON body.updatedAt 對齊，供 list 比對誰較新而不必下載整檔 */
+const APP_PROP_UPDATED_AT = 'kdrawer_updated_at'
 /** 舊版檔名：kd-{docId}.json */
 const KD_LEGACY_FILE_RE = /^kd-(.+)\.json$/i
 
@@ -102,6 +104,10 @@ export function useGoogleDriveSync({
   let folderId = ''
   /** docId → Drive file id */
   let driveFileIds = new Map()
+  /** docId → 雲端檔 appProperties 紀錄的 updatedAt（毫秒） */
+  let driveRemoteUpdatedAt = new Map()
+  /** docId → 最近一次下載的 JSON body.updatedAt（與合併／上傳比對用） */
+  let remoteJsonUpdatedAt = new Map()
   let uploadTimer = null
   let pollTimer = null
   let unsubscribeLocalChange = null
@@ -242,16 +248,23 @@ export function useGoogleDriveSync({
     return out
   }
 
-  /** 重整 docId ↔ drive file id（舊檔 kd-* 與 appProperties 並存） */
+  /** 重整 docId ↔ file id，以及雲端 appProperties 的 updatedAt */
   async function refreshKdFileIndex(fid) {
     const files = await listFolderJsonFiles(fid)
-    const next = new Map()
+    const nextIds = new Map()
+    const nextUt = new Map()
     for (const f of files) {
       if (f.name === LEGACY_SESSION_NAME) continue
       const docId = parseDocIdFromDriveFile(f)
-      if (docId) next.set(docId, f.id)
+      if (!docId) continue
+      nextIds.set(docId, f.id)
+      const ap = f.appProperties || {}
+      const raw = ap[APP_PROP_UPDATED_AT]
+      const ut = typeof raw === 'string' && raw !== '' ? Number(raw) : NaN
+      nextUt.set(docId, Number.isFinite(ut) ? ut : 0)
     }
-    driveFileIds = next
+    driveFileIds = nextIds
+    driveRemoteUpdatedAt = nextUt
   }
 
   async function downloadFileJson(mediaFileId) {
@@ -300,16 +313,39 @@ export function useGoogleDriveSync({
     }
   }
 
-  async function uploadDriveDoc(row, usedBaseNames) {
+  function localRowUpdatedAt(row) {
+    const u = row?.updatedAt
+    return typeof u === 'number' && Number.isFinite(u) ? u : 0
+  }
+
+  function remoteTimestampForDoc(docId) {
+    return Math.max(
+      driveRemoteUpdatedAt.get(docId) ?? 0,
+      remoteJsonUpdatedAt.get(docId) ?? 0,
+    )
+  }
+
+  /**
+   * 僅在本機 JSON（payload）updatedAt ≥ 雲端已知時間時上傳，避免舊本機蓋掉較新雲端。
+   * 新檔（雲端尚無此 docId）一律建立。
+   */
+  async function uploadDriveDoc(row, usedBaseNames, { skipIndexRefresh = false } = {}) {
     const fidFolder = await ensureDriveFolder()
-    await refreshKdFileIndex(fidFolder)
+    if (!skipIndexRefresh) await refreshKdFileIndex(fidFolder)
     const name = driveJsonFilenameForRow(row, usedBaseNames)
     const existed = driveFileIds.get(row.id)
+    const localUt = localRowUpdatedAt(row)
+    const remoteUt = remoteTimestampForDoc(row.id)
+    if (existed && remoteUt > localUt) return
+
     const body = rowToDrivePayload(row)
     const metadata = {
       name,
       mimeType: 'application/json',
-      appProperties: { [APP_PROP_DOC_ID]: String(row.id) },
+      appProperties: {
+        [APP_PROP_DOC_ID]: String(row.id),
+        [APP_PROP_UPDATED_AT]: String(localUt),
+      },
       ...(existed ? {} : { parents: [fidFolder] }),
     }
     const multipart = createMultipartBody(metadata, body)
@@ -322,6 +358,8 @@ export function useGoogleDriveSync({
       body: multipart.body,
     })
     driveFileIds.set(row.id, result.id)
+    driveRemoteUpdatedAt.set(row.id, localUt)
+    remoteJsonUpdatedAt.set(row.id, localUt)
   }
 
   async function pushAllLocalDocsQuiet() {
@@ -332,7 +370,7 @@ export function useGoogleDriveSync({
     await refreshKdFileIndex(folderId)
     const usedNames = new Set()
     for (const row of pl.documents) {
-      await uploadDriveDoc(row, usedNames)
+      await uploadDriveDoc(row, usedNames, { skipIndexRefresh: true })
     }
     state.lastSyncedAt = new Date()
   }
@@ -356,7 +394,11 @@ export function useGoogleDriveSync({
       try {
         const j = await downloadFileJson(f.id)
         const fromFile = parseDocIdFromDriveFile(f)
-        if (j?.v === 2 && j.id && (!fromFile || fromFile === j.id)) bodies.push(j)
+        if (j?.v === 2 && j.id && (!fromFile || fromFile === j.id)) {
+          const rut = typeof j.updatedAt === 'number' && Number.isFinite(j.updatedAt) ? j.updatedAt : 0
+          remoteJsonUpdatedAt.set(j.id, Math.max(remoteJsonUpdatedAt.get(j.id) ?? 0, rut))
+          bodies.push(j)
+        }
       } catch (_) { /* skip */ }
     }
 
@@ -390,7 +432,8 @@ export function useGoogleDriveSync({
       void (async () => {
         try {
           await ensureAccessToken('')
-          /** 本機改動：僅上傳；遠端更新由輪詢 pull */
+          /** 先拉雲端 JSON 合併（依 updatedAt），再只把本機較新的推上去 */
+          await fetchAndMergeKdFilesQuiet()
           await pushAllLocalDocsQuiet()
           state.lastSyncedAt = new Date()
         } catch (_) { /* 權杖／網路 */}
@@ -459,6 +502,8 @@ export function useGoogleDriveSync({
     state.signedIn = false
     folderId = ''
     driveFileIds = new Map()
+    driveRemoteUpdatedAt = new Map()
+    remoteJsonUpdatedAt = new Map()
     migrateLegacyRan = false
     if (pollTimer) clearInterval(pollTimer)
     pollTimer = null
