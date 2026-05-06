@@ -1,4 +1,4 @@
-import { computed, onMounted, onUnmounted, reactive } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 const GOOGLE_ACCOUNTS_SCRIPT = 'https://accounts.google.com/gsi/client'
@@ -8,14 +8,15 @@ const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const DRIVE_FOLDER_NAME = 'KDrawer'
 /** 舊版整包 session；會在首次同步時拆分為多分頁檔並刪除 */
 const LEGACY_SESSION_NAME = 'kdrawer-session.json'
-const POLL_INTERVAL_MS = 12000
-/** 畫布每次持久化後會觸發上傳；極短 debounce 以合併同一幀內多次 persist */
-const UPLOAD_DEBOUNCE_MS = 200
 /** GIS script 已插入但 load 早於我們掛 listener 時，用輪詢補救 */
 const GIS_SCRIPT_POLL_MS = 50
 const GIS_SCRIPT_POLL_MAX = 200
 /** OAuth 彈窗若未回呼（關閉視窗、阻擋彈窗）會永遠 pending，須逾時 */
 const OAUTH_CALLBACK_TIMEOUT_MS = 180000
+/** 背景分頁可能大幅延遲單次 setTimeout；用週期檢查截止時間較可靠 */
+const OAUTH_WATCHDOG_INTERVAL_MS = 1500
+/** 單一 Drive API fetch 上限；避免網路掛死時按鈕永遠 busy */
+const DRIVE_FETCH_TIMEOUT_MS = 45000
 /** 重新整理後還原登入；與 access_token 過期時間一併儲存（XSS 風險與一般 SPA token 相同） */
 const OAUTH_STORAGE_KEY = 'kdrawer-gdrive-oauth-v1'
 /** 比對 token 過期時提早更新，避免邊界秒數送 API 失敗 */
@@ -142,12 +143,7 @@ export function useGoogleDriveSync({
   getPayload,
   applyPayload,
   mergeRemoteDocFiles,
-  onLocalChange,
   showToast,
-  /** 雲端拉取合併並上傳成功後（含手動同步／登入後同步） */
-  onCloudSyncSuccess,
-  /** 與 state.signedIn 同步更新（供 painter 在 token 回呼當下即關閉本機 JSON 寫入） */
-  mirrorSignedInRef = null,
 }) {
   let tokenClient = null
   let accessToken = ''
@@ -160,10 +156,9 @@ export function useGoogleDriveSync({
   let driveRemoteUpdatedAt = new Map()
   /** docId → 最近一次下載的 JSON body.updatedAt（與合併／上傳比對用） */
   let remoteJsonUpdatedAt = new Map()
-  let uploadTimer = null
-  let pollTimer = null
-  let unsubscribeLocalChange = null
   let migrateLegacyRan = false
+  /** 避免連點或並行 ensureAccessToken / signIn 覆寫 GIS callback 造成 Promise 永不結束 */
+  let inflightTokenRequest = null
 
   const state = reactive({
     configured: Boolean(GOOGLE_CLIENT_ID),
@@ -175,14 +170,13 @@ export function useGoogleDriveSync({
 
   function setSignedIn(value) {
     state.signedIn = value
-    if (mirrorSignedInRef) mirrorSignedInRef.value = value
   }
 
   const statusLabel = computed(() => {
     if (!state.configured) return '雲端未設定'
     if (state.busy) return state.status
     if (!state.signedIn) return '雲端未登入'
-    if (state.lastSyncedAt) return '已同步 ' + state.lastSyncedAt.toLocaleTimeString()
+    if (state.lastSyncedAt) return '上次上傳 ' + state.lastSyncedAt.toLocaleTimeString()
     return state.status
   })
 
@@ -248,43 +242,56 @@ export function useGoogleDriveSync({
   }
 
   async function requestAccessToken(prompt = 'consent') {
-    const client = await initTokenClient()
-    return new Promise((resolve, reject) => {
-      let timeoutId = null
-      let finished = false
-      const finish = (fn, arg) => {
-        if (finished) return
-        finished = true
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
-        fn(arg)
-      }
+    if (inflightTokenRequest) return inflightTokenRequest
 
-      timeoutId = setTimeout(() => {
-        timeoutId = null
-        client.callback = () => {}
-        finish(reject, new Error('授權逾時：請允許彈出視窗並完成 Google 登入，或稍後再試'))
-      }, OAUTH_CALLBACK_TIMEOUT_MS)
+    inflightTokenRequest = (async () => {
+      const client = await initTokenClient()
+      return await new Promise((resolve, reject) => {
+        let watchdogId = null
+        let finished = false
+        const oauthDeadline = Date.now() + OAUTH_CALLBACK_TIMEOUT_MS
+        const finish = (fn, arg) => {
+          if (finished) return
+          finished = true
+          if (watchdogId !== null) {
+            clearInterval(watchdogId)
+            watchdogId = null
+          }
+          fn(arg)
+        }
 
-      client.callback = response => {
-        if (response?.error) {
-          finish(reject, new Error(response.error))
-          return
+        watchdogId = setInterval(() => {
+          if (finished) return
+          if (Date.now() >= oauthDeadline) {
+            client.callback = () => {}
+            finish(reject, new Error('授權逾時：請允許彈出視窗並完成 Google 登入，或稍後再試'))
+          }
+        }, OAUTH_WATCHDOG_INTERVAL_MS)
+
+        client.callback = response => {
+          if (response?.error) {
+            finish(reject, new Error(response.error))
+            return
+          }
+          accessToken = response.access_token || ''
+          if (accessToken) persistOAuthSession(accessToken, response.expires_in)
+          else tokenExpiresAt = 0
+          setSignedIn(Boolean(accessToken))
+          if (!accessToken) {
+            finish(reject, new Error('沒有取得 Google 授權權杖'))
+            return
+          }
+          finish(resolve, accessToken)
         }
-        accessToken = response.access_token || ''
-        if (accessToken) persistOAuthSession(accessToken, response.expires_in)
-        else tokenExpiresAt = 0
-        setSignedIn(Boolean(accessToken))
-        if (!accessToken) {
-          finish(reject, new Error('沒有取得 Google 授權權杖'))
-          return
-        }
-        finish(resolve, accessToken)
-      }
-      client.requestAccessToken({ prompt })
-    })
+        client.requestAccessToken({ prompt })
+      })
+    })()
+
+    try {
+      return await inflightTokenRequest
+    } finally {
+      inflightTokenRequest = null
+    }
   }
 
   async function ensureAccessToken(prompt = '') {
@@ -313,7 +320,19 @@ export function useGoogleDriveSync({
     await ensureAccessToken('')
     const headers = new Headers(options.headers || {})
     headers.set('Authorization', `Bearer ${accessToken}`)
-    const response = await fetch(path, { ...options, headers })
+    const ctrl = new AbortController()
+    const tid = setTimeout(() => ctrl.abort(), DRIVE_FETCH_TIMEOUT_MS)
+    let response
+    try {
+      response = await fetch(path, { ...options, headers, signal: ctrl.signal })
+    } catch (e) {
+      if (e?.name === 'AbortError') {
+        throw new Error('Google Drive 連線逾時，請檢查網路後再試')
+      }
+      throw e
+    } finally {
+      clearTimeout(tid)
+    }
     if (response.status === 401) {
       accessToken = ''
       tokenExpiresAt = 0
@@ -464,6 +483,7 @@ export function useGoogleDriveSync({
    * 僅在本機 JSON（payload）updatedAt ≥ 雲端已知時間時上傳，避免舊本機蓋掉較新雲端。
    * 新檔（雲端尚無此 docId）一律建立。
    */
+  /** @returns {Promise<boolean>} 是否實際上傳（雲端較新而略過時為 false） */
   async function uploadDriveDoc(row, usedBaseNames, { skipIndexRefresh = false } = {}) {
     const fidFolder = await ensureDriveFolder()
     if (!skipIndexRefresh) await refreshKdFileIndex(fidFolder)
@@ -471,7 +491,7 @@ export function useGoogleDriveSync({
     const existed = driveFileIds.get(row.id)
     const localUt = localRowUpdatedAt(row)
     const remoteUt = remoteTimestampForDoc(row.id)
-    if (existed && remoteUt > localUt) return
+    if (existed && remoteUt > localUt) return false
 
     const body = rowToDrivePayload(row)
     const metadata = {
@@ -495,49 +515,7 @@ export function useGoogleDriveSync({
     driveFileIds.set(row.id, result.id)
     driveRemoteUpdatedAt.set(row.id, localUt)
     remoteJsonUpdatedAt.set(row.id, localUt)
-  }
-
-  async function pushAllLocalDocsQuiet() {
-    const pl = typeof getPayload === 'function' ? getPayload() : null
-    if (!pl?.documents?.length) return
-    await ensureDriveFolder()
-    await migrateLegacySessionIfNeeded(folderId)
-    await refreshKdFileIndex(folderId)
-    const usedNames = new Set()
-    for (const row of pl.documents) {
-      await uploadDriveDoc(row, usedNames, { skipIndexRefresh: true })
-    }
-    state.lastSyncedAt = new Date()
-  }
-
-  async function fetchAndMergeKdFilesQuiet() {
-    await ensureDriveFolder()
-    await migrateLegacySessionIfNeeded(folderId)
-    await refreshKdFileIndex(folderId)
-
-    /**
-     * 比對 appProperties 的 updatedAt 與上次下載的快取值，
-     * 只下載「雲端確實更新過」的檔案，避免每次 poll 都全量下載。
-     */
-    const bodies = []
-    for (const [docId, fileId] of driveFileIds) {
-      const remoteUt = driveRemoteUpdatedAt.get(docId) ?? 0
-      const cachedUt = remoteJsonUpdatedAt.get(docId) ?? 0
-      if (remoteUt <= cachedUt) continue
-      try {
-        const j = await downloadFileJson(fileId)
-        if (j?.v === 2 && j.id) {
-          const rut = typeof j.updatedAt === 'number' && Number.isFinite(j.updatedAt) ? j.updatedAt : 0
-          remoteJsonUpdatedAt.set(j.id, Math.max(remoteJsonUpdatedAt.get(j.id) ?? 0, rut))
-          bodies.push(j)
-        }
-      } catch (_) { /* skip */ }
-    }
-
-    if (bodies.length && typeof mergeRemoteDocFiles === 'function') {
-      await mergeRemoteDocFiles(bodies)
-      await refreshKdFileIndex(folderId)
-    }
+    return true
   }
 
   async function deleteDriveDoc(docId) {
@@ -556,59 +534,75 @@ export function useGoogleDriveSync({
     }
   }
 
-  function schedulePushAll() {
-    if (!state.signedIn) return
-    if (uploadTimer) clearTimeout(uploadTimer)
-    uploadTimer = setTimeout(() => {
-      uploadTimer = null
-      void (async () => {
-        try {
-          await ensureAccessToken('')
-          /** 先拉雲端 JSON 合併（依 updatedAt），再只把本機較新的推上去 */
-          await fetchAndMergeKdFilesQuiet()
-          await pushAllLocalDocsQuiet()
-          state.lastSyncedAt = new Date()
-        } catch (_) { /* 權杖／網路 */}
-      })()
-    }, UPLOAD_DEBOUNCE_MS)
-  }
-
-  function startPolling() {
-    if (pollTimer) clearInterval(pollTimer)
-    pollTimer = setInterval(() => {
-      if (!state.signedIn || state.busy) return
-      void (async () => {
-        try {
-          await fetchAndMergeKdFilesQuiet()
-          state.lastSyncedAt = new Date()
-        } catch (_) { /* off-line／權杖 */ }
-      })()
-    }, POLL_INTERVAL_MS)
-  }
-
-  async function syncNow({ quiet = false } = {}) {
+  /** 手動：將單一分頁上傳到 KDrawer 資料夾（與其他分頁檔名不重複） */
+  async function saveDocToCloud(docId, { quiet = false } = {}) {
     if (!state.configured) {
       showToast?.('請先設定 VITE_GOOGLE_CLIENT_ID')
+      if (state.busy) setIdle('雲端未設定')
       return
     }
-    setBusy('同步 Google Drive 中…')
+    if (!docId) return
+    const pl = typeof getPayload === 'function' ? getPayload() : null
+    const row = pl?.documents?.find(d => d.id === docId)
+    if (!row) {
+      if (!quiet) showToast?.('找不到此分頁')
+      return
+    }
+    setBusy('上傳到 Google Drive…')
     try {
       await ensureAccessToken('')
       await ensureDriveFolder()
       await migrateLegacySessionIfNeeded(folderId)
-      /** 登入／手動同步：先把雲端拉下合併，再全部上傳本機快照 */
-      await fetchAndMergeKdFilesQuiet()
-      await pushAllLocalDocsQuiet()
-      startPolling()
-      setIdle('Google Drive 已同步')
-      try {
-        onCloudSyncSuccess?.()
-      } catch (_) {}
-      if (!quiet) showToast?.('已與 Google Drive（KDrawer 資料夾）同步')
+      await refreshKdFileIndex(folderId)
+      const usedNames = new Set()
+      for (const d of pl.documents) {
+        if (d.id === docId) continue
+        driveJsonFilenameForRow(d, usedNames)
+      }
+      const uploaded = await uploadDriveDoc(row, usedNames, { skipIndexRefresh: true })
+      state.lastSyncedAt = new Date()
+      setIdle('已上傳 Google Drive')
+      if (!quiet) {
+        showToast?.(
+          uploaded ? '此分頁已存到 Google Drive' : '雲端版本較新，未上傳（請先從雲端匯入或在本機編輯後再試）',
+        )
+      }
     } catch (error) {
-      setIdle('同步失敗')
-      if (!quiet) showToast?.('Google Drive 同步失敗：' + (error?.message || '未知錯誤'))
+      setIdle('上傳失敗')
+      if (!quiet) showToast?.('存到雲端失敗：' + (error?.message || '未知錯誤'))
     }
+  }
+
+  /** 供「從雲端匯入」列出 KDrawer 資料夾內可選的 JSON */
+  async function listDriveJsonFilesForImport() {
+    await ensureAccessToken('')
+    const fid = await ensureDriveFolder()
+    await migrateLegacySessionIfNeeded(fid)
+    const files = await listFolderJsonFiles(fid)
+    return files
+      .map(f => ({
+        id: f.id,
+        name: f.name || '(無檔名)',
+        docId: parseDocIdFromDriveFile(f) || null,
+      }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hant'))
+  }
+
+  /** 下載單一檔並合併進本機（v2 單頁 JSON 或舊版 v1 整包） */
+  async function importDriveJsonFile(fileId) {
+    await ensureAccessToken('')
+    const j = await downloadFileJson(fileId)
+    if (j?.v === 2 && typeof j.id === 'string' && j.id && typeof mergeRemoteDocFiles === 'function') {
+      await mergeRemoteDocFiles([j])
+      await refreshKdFileIndex(folderId || (await ensureDriveFolder()))
+      return
+    }
+    if (j?.v === 1 && Array.isArray(j.documents) && j.documents.length && typeof applyPayload === 'function') {
+      await applyPayload(j)
+      await refreshKdFileIndex(folderId || (await ensureDriveFolder()))
+      return
+    }
+    throw new Error('不是可匯入的 KDrawer JSON（需 v2 分頁檔或舊版整包）')
   }
 
   async function signIn() {
@@ -620,9 +614,8 @@ export function useGoogleDriveSync({
     migrateLegacyRan = false
     try {
       await requestAccessToken('consent')
-      setBusy('同步 Google Drive 中…')
-      await syncNow({ quiet: true })
-      showToast?.('已登入並同步 Google Drive')
+      setIdle('已登入 Google Drive')
+      showToast?.('已登入；編輯仍存本機，請於各分頁按「存到雲端」上傳')
     } catch (error) {
       setIdle('登入失敗')
       showToast?.('Google Drive 登入失敗：' + (error?.message || '未知錯誤'))
@@ -642,15 +635,11 @@ export function useGoogleDriveSync({
     driveRemoteUpdatedAt = new Map()
     remoteJsonUpdatedAt = new Map()
     migrateLegacyRan = false
-    if (pollTimer) clearInterval(pollTimer)
-    pollTimer = null
-    if (uploadTimer) clearTimeout(uploadTimer)
-    uploadTimer = null
     setIdle('已登出 Google Drive')
     showToast?.('已登出 Google Drive，改為本機模式')
   }
 
-  /** 重新整理後：若 localStorage 仍有有效權杖，還原 signedIn 並拉一次雲端 */
+  /** 重新整理後：若 localStorage 仍有有效權杖，僅還原登入狀態（不自動拉雲端／上傳） */
   async function restoreSessionIfPersisted() {
     const stored = readPersistedOAuth()
     if (!stored) return
@@ -662,33 +651,11 @@ export function useGoogleDriveSync({
     accessToken = stored.accessToken
     tokenExpiresAt = stored.expiresAt
     setSignedIn(true)
-    try {
-      await ensureAccessToken('')
-      await ensureDriveFolder()
-      await migrateLegacySessionIfNeeded(folderId)
-      await fetchAndMergeKdFilesQuiet()
-      await pushAllLocalDocsQuiet()
-      startPolling()
-      state.lastSyncedAt = new Date()
-      state.status = 'Google Drive 已同步'
-      try {
-        onCloudSyncSuccess?.()
-      } catch (_) {}
-    } catch (_) {
-      state.status = '已登入 Google Drive'
-      startPolling()
-    }
+    state.status = '已登入 Google Drive'
   }
 
   onMounted(() => {
-    unsubscribeLocalChange = onLocalChange?.(() => schedulePushAll()) || null
     if (state.configured) void restoreSessionIfPersisted()
-  })
-
-  onUnmounted(() => {
-    if (uploadTimer) clearTimeout(uploadTimer)
-    if (pollTimer) clearInterval(pollTimer)
-    unsubscribeLocalChange?.()
   })
 
   return {
@@ -696,7 +663,9 @@ export function useGoogleDriveSync({
     statusLabel,
     signIn,
     signOut,
-    syncNow,
+    saveDocToCloud,
+    listDriveJsonFilesForImport,
+    importDriveJsonFile,
     deleteDriveDoc,
   }
 }

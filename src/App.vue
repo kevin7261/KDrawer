@@ -6,7 +6,7 @@
       class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100 py-2 px-3"
       aria-label="控制列"
     >
-      <!-- Google Drive：已設定時僅「登入」或「登出」一鍵 -->
+      <!-- Google Drive：登入／登出；存雲端與匯入在分頁列 -->
       <template v-if="!driveState.configured">
         <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0" role="region" aria-label="雲端同步">
           <span class="kd-drive-status kd-drive-status--off d-inline-flex align-items-center gap-1" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
@@ -16,13 +16,13 @@
         <div class="vr opacity-50 align-self-center control-bar-vr" role="presentation"></div>
       </template>
       <template v-else>
-        <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0" role="region" aria-label="雲端同步">
+        <div class="d-flex align-items-center kd-drive-zone kd-drive-zone--toolbar flex-shrink-0 flex-wrap gap-1" role="region" aria-label="雲端同步">
           <button
             v-if="!driveState.signedIn"
             type="button"
             class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent px-3 text-nowrap flex-shrink-0"
             :disabled="driveState.busy"
-            title="使用 Google 帳號登入，啟用雲端同步"
+            title="登入後可上傳到雲端或從雲端匯入 JSON；未按上傳前資料仍存本機"
             :aria-label="driveState.busy ? '登入中' : '登入雲端'"
             @click="driveSignIn()"
           >
@@ -31,9 +31,9 @@
           <button
             v-else
             type="button"
-            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger px-3 text-nowrap flex-shrink-0"
+            class="btn btn-sm btn-outline-light ctrl-action ctrl-action--danger px-2 text-nowrap flex-shrink-0"
             :disabled="driveState.busy"
-            title="登出 Google Drive（改為僅本機）"
+            title="登出 Google Drive"
             aria-label="登出雲端"
             @click="driveSignOut()"
           >
@@ -241,6 +241,17 @@
                   @click="switchToDocument(i)"
                 >{{ doc.title }}</button>
                 <button
+                  v-if="driveState.configured && driveState.signedIn"
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary border-0 doc-tab__cloud p-0 d-flex align-items-center justify-content-center my-2"
+                  :disabled="driveState.busy"
+                  title="將此分頁存到 Google Drive"
+                  :aria-label="'存到雲端：' + doc.title"
+                  @click.stop="driveSaveDocToCloud(doc.id)"
+                >
+                  <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i>
+                </button>
+                <button
                   type="button"
                   class="btn btn-sm btn-outline-secondary border-0 doc-tab__close p-0 d-flex align-items-center justify-content-center ms-0 me-2 my-2"
                   :aria-label="'關閉「' + doc.title + '」'"
@@ -250,14 +261,27 @@
                 </button>
               </div>
             </div>
-            <button
-              type="button"
-              class="btn btn-sm btn-light border doc-tab-new mb-n1 p-0 ms-0 d-inline-flex align-items-center justify-content-center"
-              @click="addDocument"
-              aria-label="新增分頁"
-            >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            </button>
+            <div class="doc-tab-actions d-inline-flex align-items-end gap-1 flex-shrink-0 mb-n1">
+              <button
+                v-if="driveState.configured && driveState.signedIn"
+                type="button"
+                class="btn btn-sm btn-light border doc-tab-drive-import px-2 py-0 text-nowrap"
+                :disabled="driveState.busy || driveImportState.loading"
+                title="從 KDrawer 資料夾選一個 JSON 合併進本機"
+                aria-label="從雲端匯入"
+                @click="openDriveImportModal()"
+              >
+                從雲端匯入
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-light border doc-tab-new p-0 d-inline-flex align-items-center justify-content-center"
+                @click="addDocument"
+                aria-label="新增分頁"
+              >
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -265,7 +289,7 @@
 
     <!-- ── 畫布區 ── -->
     <main
-      class="canvas-wrap overflow-hidden p-0 d-flex align-items-center justify-content-center"
+      :class="['canvas-wrap', 'overflow-hidden', 'p-0', 'd-flex', 'align-items-center', 'justify-content-center', { 'canvas-wrap--empty': documents.length === 0 }]"
       ref="canvasWrapRef"
       aria-label="畫布區"
     >
@@ -303,6 +327,48 @@
               <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" @click="confirmCancel">取消</button>
                 <button type="button" class="btn btn-primary" @click="confirmOk">確定</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+  </Teleport>
+
+  <!-- ── 從雲端匯入 JSON ── -->
+  <Teleport to="body">
+    <transition name="modal-fade">
+      <div v-if="driveImportState.visible">
+        <div class="modal-backdrop fade show"></div>
+        <div class="modal fade show d-block kd-import-modal" tabindex="-1" role="dialog" style="z-index: 1056">
+          <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">從雲端匯入</h5>
+                <button type="button" class="btn-close" @click="closeDriveImportModal" aria-label="關閉"></button>
+              </div>
+              <div class="modal-body">
+                <p class="small text-secondary mb-2">選擇 Google Drive「KDrawer」資料夾內的一個 JSON，將合併進目前工作階段（同分頁 id 則以較新時間戳為準）。</p>
+                <div v-if="driveImportState.loading" class="text-center py-4 text-secondary">讀取檔案列表…</div>
+                <div v-else-if="!driveImportState.files.length" class="text-secondary py-3">此資料夾內尚無可匯入的 JSON。</div>
+                <ul v-else class="list-group list-group-flush kd-import-file-list">
+                  <li
+                    v-for="f in driveImportState.files"
+                    :key="f.id"
+                    class="list-group-item list-group-item-action py-2 px-2"
+                    role="button"
+                    tabindex="0"
+                    :class="{ disabled: driveImportState.picking }"
+                    @click="pickDriveImportFile(f)"
+                    @keydown.enter.prevent="pickDriveImportFile(f)"
+                    @keydown.space.prevent="pickDriveImportFile(f)"
+                  >
+                    <span class="font-monospace small text-break">{{ f.name }}</span>
+                  </li>
+                </ul>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @click="closeDriveImportModal">關閉</button>
               </div>
             </div>
           </div>
@@ -430,8 +496,6 @@ function showToast(message) {
 
 // ── Painter／雲端刪檔 shim（閉包避免 composable 循環引用） ─────────────────────
 const driveDeleteShim = { fn: (_id) => {} }
-/** 與 Google 登入狀態同步：登入時不寫 sessionStorage，登出後再寫回本機備份 */
-const driveSignedInRef = ref(false)
 
 // ── Painter composable ─────────────────────────────────────────────────────
 const {
@@ -439,8 +503,7 @@ const {
   undo, clearCanvas, savePng, copyCanvasPng, copyCanvasPngDrawnBounds,
   switchToDocument, addDocument, closeDocumentAt,
   handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
-  getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
-  clearPersistedSession,
+  getPayload, applyPayload, mergeRemoteDocFiles,
   flushLocalSessionNow,
 } = usePainter({
   canvasRef, canvasWrapRef, canvasPanLayerRef, appFooterRef,
@@ -448,7 +511,6 @@ const {
   canvasSizePresetValue, customSizeOption,
   showConfirm, showToast,
   onCloseDocument: id => driveDeleteShim.fn(id),
-  persistLocalSessionStorage: () => !driveSignedInRef.value,
 })
 
 // ── Google Drive sync ───────────────────────────────────────────────────────
@@ -456,19 +518,57 @@ const {
   state: driveState,
   signIn: driveSignIn,
   signOut: driveSignOut,
+  saveDocToCloud: driveSaveDocToCloud,
+  listDriveJsonFilesForImport,
+  importDriveJsonFile,
   deleteDriveDoc: driveDeleteDriveDoc,
 } = useGoogleDriveSync({
   getPayload,
   applyPayload,
   mergeRemoteDocFiles,
-  onLocalChange,
   showToast,
-  mirrorSignedInRef: driveSignedInRef,
-  onCloudSyncSuccess: () => {
-    clearPersistedSession()
-  },
 })
 driveDeleteShim.fn = driveDeleteDriveDoc
+
+const driveImportState = reactive({
+  visible: false,
+  loading: false,
+  picking: false,
+  files: [],
+})
+
+async function openDriveImportModal() {
+  driveImportState.visible = true
+  driveImportState.loading = true
+  driveImportState.files = []
+  try {
+    driveImportState.files = await listDriveJsonFilesForImport()
+  } catch (e) {
+    showToast('無法讀取雲端檔案：' + (e?.message || '未知錯誤'))
+    driveImportState.visible = false
+  } finally {
+    driveImportState.loading = false
+  }
+}
+
+function closeDriveImportModal() {
+  driveImportState.visible = false
+  driveImportState.files = []
+}
+
+async function pickDriveImportFile(f) {
+  if (driveImportState.picking || !f?.id) return
+  driveImportState.picking = true
+  try {
+    await importDriveJsonFile(f.id)
+    showToast('已匯入：' + (f.name || '檔案'))
+    closeDriveImportModal()
+  } catch (e) {
+    showToast('匯入失敗：' + (e?.message || '未知錯誤'))
+  } finally {
+    driveImportState.picking = false
+  }
+}
 
 watch(
   () => driveState.signedIn,

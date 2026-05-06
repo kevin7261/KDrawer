@@ -16,7 +16,7 @@ export function usePainter({
   showConfirm,
   showToast,
   onCloseDocument = null,
-  /** 若回傳 false，不寫入 sessionStorage（雲端登入時由 Drive 保存） */
+  /** 若回傳 false，不寫入 sessionStorage（預設一律寫入本機） */
   persistLocalSessionStorage = () => true,
 }) {
   // ── Internal non-reactive state ───────────────────────────────────────────
@@ -44,6 +44,8 @@ export function usePainter({
   const ZOOM_WHEEL_FACTOR = 1.06
   const HISTORY_MAX = 40
   const SESSION_STORAGE_KEY = 'kdrawer-session-v1'
+  /** 無任何分頁時畫布底色（與 .canvas-wrap--empty 一致） */
+  const EMPTY_SESSION_CANVAS_BG = '#9a9a9a'
 
   const history = []
   /** @type {ReturnType<typeof setTimeout> | null} */
@@ -226,6 +228,15 @@ export function usePainter({
   }
 
   function scheduleViewportLogicalSync() {
+    if (!documents.value.length && canvasSizePresetValue.value === CANVAS_VIEWPORT_OPTION) {
+      if (viewportSyncRaf !== null) cancelAnimationFrame(viewportSyncRaf)
+      viewportSyncRaf = requestAnimationFrame(() => {
+        viewportSyncRaf = null
+        loadEmptyCanvasState()
+        applyCanvasDisplaySize()
+      })
+      return
+    }
     const d = documents.value[activeDocIndex.value]
     if (!documentUsesViewport(d)) { applyCanvasDisplaySize(); return }
     if (viewportSyncRaf !== null) cancelAnimationFrame(viewportSyncRaf)
@@ -249,6 +260,7 @@ export function usePainter({
   }
 
   function undo() {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     if (history.length === 0) return
     restoreSnapshot(history.pop())
     markActiveDocPixelDirty()
@@ -395,7 +407,10 @@ export function usePainter({
       const raw = sessionStorage.getItem(SESSION_STORAGE_KEY)
       if (!raw) return null
       const parsed = JSON.parse(raw)
-      if (parsed.v !== 1 || !Array.isArray(parsed.documents) || parsed.documents.length === 0) return null
+      if (parsed.v !== 1 || !Array.isArray(parsed.documents)) return null
+      if (parsed.documents.length === 0) {
+        return { documents: [], activeDocIndex: 0 }
+      }
       const activeIdx = Math.min(Math.max(0, parsed.activeDocIndex | 0), parsed.documents.length - 1)
       const restored = []
       for (const row of parsed.documents) {
@@ -429,6 +444,52 @@ export function usePainter({
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, c.width, c.height)
     ctx.restore()
+  }
+
+  function fillCanvasEmptyPlaceholderNoHistory() {
+    if (!ctx) return
+    const c = canvas()
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.fillStyle = EMPTY_SESSION_CANVAS_BG
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.restore()
+  }
+
+  /** 無分頁：依目前畫布尺寸選項顯示灰色佔位畫布 */
+  function loadEmptyCanvasState() {
+    if (!ctx) return
+    panX = 0; panY = 0; panDrag = null
+    const wrap = canvasWrap()
+    if (wrap) wrap.classList.remove('canvas-wrap--pannable')
+    history.length = 0
+    const val = canvasSizePresetValue.value
+    let w
+    let h
+    if (val === CANVAS_VIEWPORT_OPTION) {
+      const av = getCanvasWrapAvailPx()
+      w = av.w
+      h = av.h
+    } else {
+      const parsed = parseCanvasSizeValue(val)
+      if (parsed) {
+        w = parsed.w
+        h = parsed.h
+      } else {
+        w = DEFAULT_LOGICAL_W
+        h = DEFAULT_LOGICAL_H
+      }
+    }
+    w = Math.min(8192, Math.max(16, Math.round(w)))
+    h = Math.min(8192, Math.max(16, Math.round(h)))
+    logicalW.value = w
+    logicalH.value = h
+    zoomScale = 1
+    setupHighResCanvas()
+    fillCanvasEmptyPlaceholderNoHistory()
+    syncCanvasSizeSelect()
+    syncZoomUi()
+    applyCanvasCursor()
   }
 
   /** persistActiveDocument：永遠更新目前分頁的 zoom／邏輯尺寸；快照與 cloud 只在 pixelDirty 時處理 */
@@ -503,6 +564,7 @@ export function usePainter({
       ;(d.history || []).forEach(snap => { const cl = cloneImageData(snap); if (cl) history.push(cl) })
     }
     syncCanvasSizeSelect()
+    applyCanvasCursor()
   }
 
   function parseCanvasSizeValue(val) {
@@ -533,6 +595,13 @@ export function usePainter({
   }
 
   async function applyCanvasSizeFromUserSelect() {
+    if (documents.value.length === 0) {
+      endStroke(); dragShape = null; drawing = false
+      loadEmptyCanvasState()
+      applyCanvasDisplaySize()
+      scheduleSessionPersistence()
+      return
+    }
     const val = canvasSizePresetValue.value
     if (val === CANVAS_VIEWPORT_OPTION) {
       const d = documents.value[activeDocIndex.value]
@@ -605,25 +674,31 @@ export function usePainter({
     fillCanvasWhiteNoHistory()
     history.length = 0
     persistActiveDocument()
-    /** 必須立刻寫入 session 並通知雲端，否則 debounce 下 getPayload 可能尚未含新分頁 */
+    /** 必須立刻寫入 session，否則 debounce 下 getPayload 可能尚未含新分頁 */
     flushSessionPersistenceSync()
     emitLocalChangeForSync()
     applyCanvasDisplaySize()
+    applyCanvasCursor()
   }
 
   function closeDocumentAt(closeIdx) {
-    if (documents.value.length <= 1) { showToast('至少保留一個分頁'); return }
+    if (closeIdx < 0 || closeIdx >= documents.value.length) return
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
     const closedId = documents.value[closeIdx]?.id
     const wasActive = closeIdx === activeDocIndex.value
     documents.value.splice(closeIdx, 1)
-    if (wasActive) {
-      activeDocIndex.value = Math.min(closeIdx, documents.value.length - 1)
-    } else if (activeDocIndex.value > closeIdx) {
-      activeDocIndex.value--
+    if (documents.value.length === 0) {
+      activeDocIndex.value = 0
+      loadEmptyCanvasState()
+    } else {
+      if (wasActive) {
+        activeDocIndex.value = Math.min(closeIdx, documents.value.length - 1)
+      } else if (activeDocIndex.value > closeIdx) {
+        activeDocIndex.value--
+      }
+      loadDocumentAt(activeDocIndex.value)
     }
-    loadDocumentAt(activeDocIndex.value)
     applyCanvasDisplaySize()
     try { typeof onCloseDocument === 'function' && closedId && onCloseDocument(closedId) } catch (_) {}
   }
@@ -676,6 +751,10 @@ export function usePainter({
   function applyCanvasCursor() {
     const c = canvas()
     if (!c) return
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) {
+      c.style.cursor = 'default'
+      return
+    }
     c.style.cursor = toolCursorCss(tool.value)
   }
 
@@ -757,6 +836,7 @@ export function usePainter({
   }
 
   function beginStroke(x, y, isRightButton) {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     if (tool.value === 'pick') {
       const hex = sampleAtLogical(x, y)
       if (isRightButton) { color2.value = hex; activeColorSlot.value = 2 }
@@ -842,6 +922,7 @@ export function usePainter({
 
   // ── Public actions ────────────────────────────────────────────────────────
   function clearCanvas() {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     pushHistory()
     const c = canvas()
     if (!ctx || !c) return
@@ -853,6 +934,7 @@ export function usePainter({
   }
 
   function savePng() {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     const c = canvas()
     if (!c) return
     const a = document.createElement('a')
@@ -862,6 +944,7 @@ export function usePainter({
   }
 
   async function copyCanvasPng() {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     const c = canvas()
     if (!c) return
     if (!navigator.clipboard || typeof ClipboardItem === 'undefined') { showToast('此環境不支援複製圖片到剪貼簿'); return }
@@ -892,6 +975,7 @@ export function usePainter({
   }
 
   async function copyCanvasPngDrawnBounds() {
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
     const c = canvas()
     if (!c || !ctx) return
     if (!navigator.clipboard || typeof ClipboardItem === 'undefined') { showToast('此環境不支援複製圖片到剪貼簿'); return }
@@ -946,19 +1030,15 @@ export function usePainter({
       const restored = await tryRestoreSessionFromStorage()
       if (restored) {
         documents.value = restored.documents
-        activeDocIndex.value = restored.activeDocIndex
+        const n = restored.documents.length
+        activeDocIndex.value = n === 0 ? 0 : Math.min(Math.max(0, restored.activeDocIndex | 0), n - 1)
       } else {
-        const avInit = getCanvasWrapAvailPx()
-        documents.value = [{
-          id: genDocId(), title: formatDefaultDocTitle(), zoomScale: 1,
-          useViewportSize: true, logicalW: avInit.w, logicalH: avInit.h,
-          canvasSnapshot: null, history: [], updatedAt: Date.now(),
-          pixelDirty: false,
-        }]
+        documents.value = []
         activeDocIndex.value = 0
       }
 
-      loadDocumentAt(activeDocIndex.value)
+      if (!documents.value.length) loadEmptyCanvasState()
+      else loadDocumentAt(activeDocIndex.value)
       syncCanvasSizeSelect()
       applyCanvasDisplaySize()
       applyCanvasCursor()
@@ -968,6 +1048,10 @@ export function usePainter({
       c.addEventListener('pointerdown', e => {
         if (e.pointerType === 'mouse' && e.button === 1) return
         if (e.pointerType === 'mouse' && e.button === 0 && e.altKey) return
+        if (!documents.value.length || !documents.value[activeDocIndex.value]) {
+          e.preventDefault()
+          return
+        }
         c.setPointerCapture(e.pointerId)
         const { x, y } = clientToCanvas(e.clientX, e.clientY)
         beginStroke(x, y, e.pointerType === 'mouse' && e.button === 2)
@@ -1101,7 +1185,24 @@ export function usePainter({
   }
 
   async function applyPayload(payload) {
-    if (!payload || payload.v !== 1 || !Array.isArray(payload.documents) || payload.documents.length === 0) return
+    if (!payload || payload.v !== 1 || !Array.isArray(payload.documents)) return
+    if (payload.documents.length === 0) {
+      try {
+        endStroke(); dragShape = null; drawing = false
+        documents.value = []
+        activeDocIndex.value = 0
+        loadEmptyCanvasState()
+        syncCanvasSizeSelect()
+        applyCanvasDisplaySize()
+        if (shouldWriteSessionStorage()) {
+          try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(buildSessionPayloadV1())) } catch (_) {}
+        }
+        applyCanvasCursor()
+      } catch (e) {
+        showToast('套用資料失敗：' + (e?.message || '未知錯誤'))
+      }
+      return
+    }
     try {
       const activeIdx = Math.min(Math.max(0, (payload.activeDocIndex || 0) | 0), payload.documents.length - 1)
       const restored = []
@@ -1206,7 +1307,8 @@ export function usePainter({
       endStroke(); dragShape = null; drawing = false
       documents.value = processed
       activeDocIndex.value = Math.min(activeDocIndex.value, Math.max(0, documents.value.length - 1))
-      loadDocumentAt(activeDocIndex.value)
+      if (!documents.value.length) loadEmptyCanvasState()
+      else loadDocumentAt(activeDocIndex.value)
       syncCanvasSizeSelect()
       applyCanvasDisplaySize()
       flushSessionPersistenceSync()

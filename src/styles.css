@@ -255,6 +255,69 @@ body {
   pointer-events: none;
 }
 
+.doc-tab__cloud {
+  width: 28px;
+  min-height: 100%;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: #3b6fb8;
+  cursor: pointer;
+  transition:
+    color var(--ease-out),
+    background-color var(--ease-out);
+}
+
+.doc-tab__cloud.btn {
+  border: none;
+  box-shadow: none;
+  background-image: none;
+}
+
+.doc-tab__cloud:hover:not(:disabled) {
+  color: #1d4ed8;
+  background-color: rgba(59, 130, 246, 0.12);
+}
+
+.doc-tab__cloud:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.doc-tab__cloud .fa-solid {
+  font-size: 0.75rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.doc-tab-actions {
+  align-self: flex-end;
+}
+
+.doc-tab-drive-import {
+  height: 33px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.1;
+  border-bottom: none !important;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: #4d5d75;
+  background-color: var(--tab-idle-bg);
+  box-shadow: none;
+  background-image: none;
+}
+
+.doc-tab-drive-import:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: #7c8fab !important;
+  background-color: #d7e0ee;
+}
+
+.doc-tab-drive-import:disabled {
+  opacity: 0.5;
+}
+
 .doc-tab-new {
   position: relative;
   z-index: 2;
@@ -738,6 +801,10 @@ body {
   overscroll-behavior: none;
   background-color: var(--canvas-gutter);
   touch-action: none;
+}
+
+.canvas-wrap--empty {
+  background-color: #9a9a9a;
 }
 
 .canvas-wrap--pannable {
