@@ -518,22 +518,6 @@ export function useGoogleDriveSync({
     return true
   }
 
-  async function deleteDriveDoc(docId) {
-    if (!state.signedIn || !docId) return
-    try {
-      await ensureAccessToken('')
-      const fidFolder = folderId || (await ensureDriveFolder())
-      await refreshKdFileIndex(fidFolder)
-      const fid = driveFileIds.get(docId)
-      if (fid) {
-        await driveFetch(`${DRIVE_API_BASE}/files/${fid}`, { method: 'DELETE' })
-        driveFileIds.delete(docId)
-      }
-    } catch (e) {
-      showToast?.('刪除雲端檔案失敗：' + (e?.message || '未知錯誤'))
-    }
-  }
-
   /** 手動：將單一分頁上傳到 KDrawer 資料夾（與其他分頁檔名不重複） */
   async function saveDocToCloud(docId, { quiet = false } = {}) {
     if (!state.configured) {
@@ -666,6 +650,5 @@ export function useGoogleDriveSync({
     saveDocToCloud,
     listDriveJsonFilesForImport,
     importDriveJsonFile,
-    deleteDriveDoc,
   }
 }

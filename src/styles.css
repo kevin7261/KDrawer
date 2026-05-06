@@ -296,16 +296,25 @@ body {
 }
 
 .doc-tab-drive-import {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  align-self: flex-end;
+  width: 34px;
+  min-width: 34px;
   height: 33px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  line-height: 1.1;
+  border: 1px solid var(--tab-idle-border);
   border-bottom: none !important;
   border-radius: var(--radius) var(--radius) 0 0;
-  color: #4d5d75;
+  color: var(--muted);
   background-color: var(--tab-idle-bg);
   box-shadow: none;
   background-image: none;
+  cursor: pointer;
+  transition:
+    color var(--ease-out),
+    border-color var(--ease-out),
+    background-color var(--ease-out);
 }
 
 .doc-tab-drive-import:hover:not(:disabled) {
@@ -316,6 +325,22 @@ body {
 
 .doc-tab-drive-import:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.doc-tab-drive-import.btn {
+  background-image: none;
+}
+
+.doc-tab-drive-import:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.doc-tab-drive-import .fa-solid {
+  font-size: 0.8125rem;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .doc-tab-new {

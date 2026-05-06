@@ -263,23 +263,23 @@
             </div>
             <div class="doc-tab-actions d-inline-flex align-items-end gap-1 flex-shrink-0 mb-n1">
               <button
-                v-if="driveState.configured && driveState.signedIn"
-                type="button"
-                class="btn btn-sm btn-light border doc-tab-drive-import px-2 py-0 text-nowrap"
-                :disabled="driveState.busy || driveImportState.loading"
-                title="從 KDrawer 資料夾選一個 JSON 合併進本機"
-                aria-label="從雲端匯入"
-                @click="openDriveImportModal()"
-              >
-                從雲端匯入
-              </button>
-              <button
                 type="button"
                 class="btn btn-sm btn-light border doc-tab-new p-0 d-inline-flex align-items-center justify-content-center"
                 @click="addDocument"
                 aria-label="新增分頁"
               >
                 <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="driveState.configured && driveState.signedIn"
+                type="button"
+                class="btn btn-sm btn-light border doc-tab-drive-import p-0 d-inline-flex align-items-center justify-content-center"
+                :disabled="driveState.busy || driveImportState.loading"
+                title="從 KDrawer 資料夾選一個 JSON 合併進本機"
+                aria-label="從雲端匯入"
+                @click="openDriveImportModal()"
+              >
+                <i class="fa-solid fa-cloud-arrow-down" aria-hidden="true"></i>
               </button>
             </div>
           </div>
@@ -494,9 +494,6 @@ function showToast(message) {
   toastTimer = setTimeout(() => { toastState.visible = false }, 2800)
 }
 
-// ── Painter／雲端刪檔 shim（閉包避免 composable 循環引用） ─────────────────────
-const driveDeleteShim = { fn: (_id) => {} }
-
 // ── Painter composable ─────────────────────────────────────────────────────
 const {
   zoomLabel, cursorPt, documents, activeDocIndex,
@@ -510,7 +507,6 @@ const {
   tool, brushSize, color1, color2, activeColorSlot,
   canvasSizePresetValue, customSizeOption,
   showConfirm, showToast,
-  onCloseDocument: id => driveDeleteShim.fn(id),
 })
 
 // ── Google Drive sync ───────────────────────────────────────────────────────
@@ -521,14 +517,12 @@ const {
   saveDocToCloud: driveSaveDocToCloud,
   listDriveJsonFilesForImport,
   importDriveJsonFile,
-  deleteDriveDoc: driveDeleteDriveDoc,
 } = useGoogleDriveSync({
   getPayload,
   applyPayload,
   mergeRemoteDocFiles,
   showToast,
 })
-driveDeleteShim.fn = driveDeleteDriveDoc
 
 const driveImportState = reactive({
   visible: false,
