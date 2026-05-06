@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "serve": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/postbuild.js",
     "preview": "vite preview",
-    "deploy": "npm run build && gh-pages -d docs"
+    "deploy": "npm run build && gh-pages -d docs --dotfiles"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",
