@@ -1,9 +1,9 @@
-# Pages: Settings → Build and deployment → Source = "GitHub Actions" (recommended), or branch "main" + folder "/docs".
-name: Deploy GitHub Pages
+# 常態布署：本機執行 `npm run deploy`（build + commit/push `docs/`）。
+# GitHub Pages：Settings → Source = branch main、folder「/docs」（勿與本 workflow 並用同一網址）。
+# 若要改回「只推 main 就自動上版」，可再打開下方 `push` 觸發。
+name: Deploy GitHub Pages (manual backup)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

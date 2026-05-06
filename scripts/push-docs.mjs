@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * After `vite build`, commits and pushes only `docs/` so GitHub Pages (main + /docs) updates.
- * Set SKIP_DOCS_PUSH=1 to only build without git.
+ * 與 npm run deploy 搭配：vite build 後只 commit / push `docs/`。
+ * GitHub Pages 請設為 branch main → folder `/docs`。
+ * SKIP_DOCS_PUSH=1 → 只做 build，不執行 git。
  */
 import { execSync } from 'node:child_process'
 
@@ -24,6 +25,17 @@ function listStagedPaths() {
     return out.trim().split('\n').filter(Boolean)
   } catch {
     return []
+  }
+}
+
+/** @returns {number|null} commits ahead of upstream, or null if unknown */
+function commitsAheadOfUpstream() {
+  try {
+    const line = execSync('git status -sb', { encoding: 'utf8' }).split('\n')[0] || ''
+    const m = line.match(/\[ahead (\d+)\]/)
+    return m ? parseInt(m[1], 10) : 0
+  } catch {
+    return null
   }
 }
 
@@ -50,8 +62,15 @@ sh('git add docs/')
 
 const hasStagedChanges = !shSilent('git diff --cached --quiet')
 if (!hasStagedChanges) {
-  console.log('docs/ 相對於上一次 commit 無變更；未建立新 commit。')
-  console.log('若網站仍未更新，請到 GitHub → Settings → Pages 確認來源為 branch main、資料夾 /docs，或使用 GitHub Actions。')
+  const ahead = commitsAheadOfUpstream()
+  if (ahead && ahead > 0) {
+    console.log(`docs/ 無新變更；目前分支仍領先遠端 ${ahead} 個 commit，改為執行 git push。`)
+    sh('git push')
+    console.log('已 push。')
+    process.exit(0)
+  }
+  console.log('docs/ 相對於上一次 commit 無變更；未建立新 commit、未 push。')
+  console.log('若網站仍未更新，請到 GitHub → Settings → Pages 確認來源為 branch main、資料夾 /docs。')
   process.exit(0)
 }
 

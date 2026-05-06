@@ -1,8 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// GitHub Project Page: https://kevin7261.github.io/KDrawer/
-// Set Pages to "main" + "/docs" folder, or GitHub Actions (workflow uploads `docs/`).
+// 正式站：一律用 `npm run deploy`（build + 提交並 push `docs/`）；Pages 設 main + /docs。
 export default defineConfig(({ mode }) => ({
   plugins: [vue()],
   base: mode === 'production' ? '/KDrawer/' : '/',
