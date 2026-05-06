@@ -18,6 +18,15 @@ function shSilent(cmd) {
   }
 }
 
+function listStagedPaths() {
+  try {
+    const out = execSync('git diff --cached --name-only', { encoding: 'utf8' })
+    return out.trim().split('\n').filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
 if (process.env.SKIP_DOCS_PUSH === '1') {
   console.log('已略過 git（SKIP_DOCS_PUSH=1）。')
   process.exit(0)
@@ -25,6 +34,15 @@ if (process.env.SKIP_DOCS_PUSH === '1') {
 
 if (!shSilent('git rev-parse --git-dir')) {
   console.error('錯誤：不在 git  repository 內，無法 push。請在專案根目錄執行 npm run deploy。')
+  process.exit(1)
+}
+
+const nonDocsStaged = listStagedPaths().filter((f) => !f.startsWith('docs/'))
+if (nonDocsStaged.length) {
+  console.error(
+    '錯誤：staging 已有 docs/ 以外的檔案，請先 commit 或執行 git restore --staged … 再 npm run deploy：\n',
+    nonDocsStaged.join('\n'),
+  )
   process.exit(1)
 }
 
