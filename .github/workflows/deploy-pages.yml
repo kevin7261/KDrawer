@@ -1,9 +1,16 @@
-# 常態布署：本機執行 `npm run deploy`（build + commit/push `docs/`）。
-# GitHub Pages：Settings → Source = branch main、folder「/docs」（勿與本 workflow 並用同一網址）。
-# 若要改回「只推 main 就自動上版」，可再打開下方 `push` 觸發。
-name: Deploy GitHub Pages (manual backup)
+# 推上 main 即自動 build 並發布到 GitHub Pages（正確的 production 靜態檔）。
+#
+# 首次設定（只做一次）：
+# Repo → Settings → Pages → Build and deployment → Source 選「GitHub Actions」
+# （勿再用「Deploy from a branch」的 / (root)，否則會發到開發用 index.html。）
+#
+# 仍可手動執行：Actions → Deploy GitHub Pages → Run workflow
+name: Deploy GitHub Pages
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -34,6 +41,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
 
       - uses: actions/configure-pages@v5
 
