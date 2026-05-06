@@ -2,6 +2,18 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
+  <!-- GH_PAGES_ROOT_REDIRECT -->
+  <script>
+    (function () {
+      try {
+        if (!/github\.io$/i.test(location.hostname || '')) return
+        var p = location.pathname || ''
+        if (!/^\/KDrawer\/?$/.test(p)) return
+        location.replace('/KDrawer/docs/' + (location.search || '') + (location.hash || ''))
+      } catch (e) {}
+    })()
+  </script>
+  <!-- /GH_PAGES_ROOT_REDIRECT -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KDrawer</title>
   <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
