@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "timestamp": 0,
+  "activeDocIndex": 0,
+  "documents": [
+    {
+      "id": "seed",
+      "title": "分頁 1",
+      "zoomScale": 1,
+      "useViewportSize": true,
+      "logicalW": 1280,
+      "logicalH": 800,
+      "png": null
+    }
+  ]
+}
