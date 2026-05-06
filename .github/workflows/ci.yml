@@ -1,0 +1,40 @@
+# 靜態站以 main 的 docs/ 為準：本機執行 `npm run deploy` 會 build 後 commit + push docs/。
+#
+# GitHub Pages（擇一，建議用 branch + /docs）：
+# Settings → Pages → Build and deployment → Source：Deploy from a branch
+# → Branch: main，Folder: /docs
+#
+# 若仍使用「GitHub Actions」作為 Pages 來源，會與 main/docs 重疊；請只保留一種。
+# 本 workflow 僅在 CI 驗證能成功 build（可搭配 Repository secret VITE_GOOGLE_CLIENT_ID）。
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
