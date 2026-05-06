@@ -270,7 +270,7 @@ export function usePainter({
   // ── Document management ───────────────────────────────────────────────────
   function formatDefaultDocTitle() {
     const n = new Date()
-    const y = String(n.getFullYear())
+    const y = String(n.getFullYear() % 100).padStart(2, '0')
     const mo = String(n.getMonth() + 1).padStart(2, '0')
     const da = String(n.getDate()).padStart(2, '0')
     const h = String(n.getHours()).padStart(2, '0')

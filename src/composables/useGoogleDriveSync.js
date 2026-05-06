@@ -159,6 +159,8 @@ export function useGoogleDriveSync({
   let migrateLegacyRan = false
   /** 避免連點或並行 ensureAccessToken / signIn 覆寫 GIS callback 造成 Promise 永不結束 */
   let inflightTokenRequest = null
+  /** GIS error_callback 與目前一輪 requestAccessToken 對齊（彈窗被擋、手動關閉） */
+  let oauthUxErrorHandler = null
 
   const state = reactive({
     configured: Boolean(GOOGLE_CLIENT_ID),
@@ -237,6 +239,9 @@ export function useGoogleDriveSync({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
       callback: () => {},
+      error_callback: detail => {
+        oauthUxErrorHandler?.(detail)
+      },
     })
     return tokenClient
   }
@@ -253,6 +258,7 @@ export function useGoogleDriveSync({
         const finish = (fn, arg) => {
           if (finished) return
           finished = true
+          oauthUxErrorHandler = null
           if (watchdogId !== null) {
             clearInterval(watchdogId)
             watchdogId = null
@@ -264,9 +270,22 @@ export function useGoogleDriveSync({
           if (finished) return
           if (Date.now() >= oauthDeadline) {
             client.callback = () => {}
+            oauthUxErrorHandler = null
             finish(reject, new Error('授權逾時：請允許彈出視窗並完成 Google 登入，或稍後再試'))
           }
         }, OAUTH_WATCHDOG_INTERVAL_MS)
+
+        oauthUxErrorHandler = detail => {
+          const t = detail?.type
+          const msg =
+            t === 'popup_failed_to_open'
+              ? '無法開啟 Google 登入視窗（請檢查：瀏覽器是否阻擋彈窗、廣告阻擋／追蹤封鎖是否擋住 accounts.google.com；桌面 Chrome 可暫時允許第三方 Cookie 對測試）'
+              : t === 'popup_closed'
+                ? '已關閉登入視窗'
+                : 'Google 登入中斷'
+          client.callback = () => {}
+          finish(reject, new Error(msg))
+        }
 
         client.callback = response => {
           if (response?.error) {
