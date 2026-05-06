@@ -235,6 +235,63 @@
           <span class="kd-footer-meta text-nowrap">游標（畫布座標）</span>
           <span class="kd-footer-readout font-monospace user-select-all footer-cursor-val">{{ cursorPt }}</span>
         </div>
+
+        <!-- Google Drive 同步區 -->
+        <div class="d-flex align-items-center gap-2 kd-drive-zone">
+          <template v-if="driveState.configured">
+            <span
+              class="kd-drive-status text-nowrap"
+              :class="driveState.busy ? 'kd-drive-status--busy' : driveState.signedIn ? 'kd-drive-status--ok' : 'kd-drive-status--off'"
+              :title="driveStatusLabel"
+            >
+              <i
+                class="fa-brands fa-google-drive"
+                :class="driveState.busy ? 'fa-spin' : ''"
+                aria-hidden="true"
+              ></i>
+              <span class="kd-drive-label ms-1">{{ driveStatusLabel }}</span>
+            </span>
+
+            <template v-if="driveState.signedIn">
+              <button
+                type="button"
+                class="btn btn-xs btn-outline-secondary kd-drive-btn"
+                :disabled="driveState.busy"
+                title="立即同步 Google Drive"
+                @click="driveSyncNow()"
+              >
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+              </button>
+              <button
+                type="button"
+                class="btn btn-xs btn-outline-danger kd-drive-btn"
+                :disabled="driveState.busy"
+                title="登出 Google Drive"
+                @click="driveSignOut()"
+              >
+                <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+              </button>
+            </template>
+
+            <button
+              v-else
+              type="button"
+              class="btn btn-xs btn-outline-primary kd-drive-btn"
+              :disabled="driveState.busy"
+              title="使用 Google 帳號登入，啟用雲端同步"
+              @click="driveSignIn()"
+            >
+              <i class="fa-brands fa-google" aria-hidden="true"></i>
+              <span class="ms-1">登入雲端</span>
+            </button>
+          </template>
+
+          <span v-else class="kd-drive-status kd-drive-status--off" title="尚未設定 VITE_GOOGLE_CLIENT_ID">
+            <i class="fa-brands fa-google-drive" aria-hidden="true"></i>
+            <span class="kd-drive-label ms-1">雲端未設定</span>
+          </span>
+        </div>
+
         <span class="kd-footer-brand">KDrawer</span>
       </div>
     </footer>
@@ -293,6 +350,7 @@
 <script setup>
 import { ref, reactive, computed } from 'vue'
 import { usePainter } from './composables/usePainter.js'
+import { useGoogleDriveSync } from './composables/useGoogleDriveSync.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const SWATCHES = [
@@ -386,11 +444,27 @@ const {
   undo, clearCanvas, savePng, copyCanvasPng, copyCanvasPngDrawnBounds,
   switchToDocument, addDocument, closeDocumentAt,
   handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
+  getPayload, applyPayload, onLocalChange,
 } = usePainter({
   canvasRef, canvasWrapRef, canvasPanLayerRef, appFooterRef,
   tool, brushSize, color1, color2, activeColorSlot,
   canvasSizePresetValue, customSizeOption,
   showConfirm, showToast,
+})
+
+// ── Google Drive sync ──────────────────────────────────────────────────────
+const {
+  state: driveState,
+  statusLabel: driveStatusLabel,
+  signIn: driveSignIn,
+  signOut: driveSignOut,
+  syncNow: driveSyncNow,
+} = useGoogleDriveSync({
+  getPayload,
+  applyPayload,
+  onLocalChange,
+  showConfirm,
+  showToast,
 })
 </script>
 
@@ -411,5 +485,36 @@ const {
 .toast-fade-enter-from,
 .toast-fade-leave-to {
   opacity: 0;
+}
+
+/* ── Google Drive 狀態列 ── */
+.kd-drive-zone {
+  font-size: 0.78rem;
+}
+.kd-drive-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  opacity: 0.8;
+}
+.kd-drive-status--ok  { color: #4caf8a; }
+.kd-drive-status--off { color: #888; }
+.kd-drive-status--busy { color: #ffc107; }
+.kd-drive-label {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kd-drive-btn {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.btn-xs {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  border-radius: 0.25rem;
 }
 </style>

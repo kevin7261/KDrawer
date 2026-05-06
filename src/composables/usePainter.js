@@ -46,6 +46,7 @@ export function usePainter({
   /** @type {ReturnType<typeof setTimeout> | null} */
   let sessionSaveTimer = null
   let sessionFlushInProgress = false
+  let localChangeCallbacks = []
 
   // ── Reactive state exposed to UI ──────────────────────────────────────────
   const zoomLabel = ref('100%')
@@ -298,6 +299,7 @@ export function usePainter({
     sessionSaveTimer = setTimeout(() => {
       sessionSaveTimer = null
       flushSessionPersistence()
+      localChangeCallbacks.forEach(fn => { try { fn() } catch (_) {} })
     }, 220)
   }
 
@@ -308,6 +310,7 @@ export function usePainter({
       persistActiveDocument()
       const payload = {
         v: 1,
+        updatedAt: Date.now(),
         activeDocIndex: activeDocIndex.value,
         documents: documents.value.map(d => ({
           id: d.id,
@@ -1018,10 +1021,59 @@ export function usePainter({
     if (viewportSyncRaf !== null) cancelAnimationFrame(viewportSyncRaf)
   })
 
+  function getPayload() {
+    flushSessionPersistenceSync()
+    try {
+      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY)
+      if (raw) return JSON.parse(raw)
+    } catch (_) {}
+    return null
+  }
+
+  async function applyPayload(payload) {
+    if (!payload || payload.v !== 1 || !Array.isArray(payload.documents) || payload.documents.length === 0) return
+    try {
+      const activeIdx = Math.min(Math.max(0, (payload.activeDocIndex || 0) | 0), payload.documents.length - 1)
+      const restored = []
+      for (const row of payload.documents) {
+        let canvasSnapshot = null
+        if (row.png && typeof row.png === 'string') canvasSnapshot = await pngDataUrlToImageData(row.png)
+        restored.push({
+          id: typeof row.id === 'string' ? row.id : genDocId(),
+          title: typeof row.title === 'string' ? row.title : '分頁',
+          zoomScale: typeof row.zoomScale === 'number' && Number.isFinite(row.zoomScale) ? row.zoomScale : 1,
+          useViewportSize: !!row.useViewportSize,
+          logicalW: row.logicalW,
+          logicalH: row.logicalH,
+          canvasSnapshot,
+          history: [],
+        })
+      }
+      endStroke(); dragShape = null; drawing = false
+      documents.value = restored
+      activeDocIndex.value = activeIdx
+      loadDocumentAt(activeDocIndex.value)
+      syncCanvasSizeSelect()
+      applyCanvasDisplaySize()
+      try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload)) } catch (_) {}
+    } catch (e) {
+      showToast('套用雲端資料失敗：' + (e?.message || '未知錯誤'))
+    }
+  }
+
+  function onLocalChange(fn) {
+    localChangeCallbacks.push(fn)
+    return () => {
+      const idx = localChangeCallbacks.indexOf(fn)
+      if (idx >= 0) localChangeCallbacks.splice(idx, 1)
+    }
+  }
+
   return {
     zoomLabel, cursorPt, documents, activeDocIndex,
     undo, clearCanvas, savePng, copyCanvasPng, copyCanvasPngDrawnBounds,
     switchToDocument, addDocument, closeDocumentAt,
     handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
+    getPayload, applyPayload, onLocalChange,
   }
 }

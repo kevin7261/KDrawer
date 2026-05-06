@@ -6,7 +6,8 @@
   "scripts": {
     "serve": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",
