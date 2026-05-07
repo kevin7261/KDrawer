@@ -3,7 +3,7 @@
 
     <!-- ── 頂部控制列 ── -->
     <header
-      class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100 py-2 px-3"
+      class="control-bar kd-toolbar d-flex flex-wrap align-items-center justify-content-start gap-2 w-100 py-1 px-2"
       aria-label="控制列"
     >
       <!-- Google Drive：登入／登出；存雲端與匯入在分頁列 -->
