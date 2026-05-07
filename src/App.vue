@@ -233,13 +233,29 @@
                 :class="['doc-tab', 'mb-n1', { 'doc-tab--active': i === activeDocIndex }]"
               >
                 <button
+                  v-if="tabRename.index !== i"
                   type="button"
                   class="doc-tab__main px-3 py-2"
                   role="tab"
-                  :title="doc.title"
+                  :title="doc.title + '（雙擊可改名）'"
                   :aria-selected="i === activeDocIndex"
                   @click="switchToDocument(i)"
+                  @dblclick.stop="beginTabRename(i)"
                 >{{ doc.title }}</button>
+                <input
+                  v-else
+                  ref="tabRenameInputRef"
+                  v-model="tabRename.draft"
+                  type="text"
+                  class="form-control form-control-sm doc-tab__rename-input px-2 py-1"
+                  :aria-label="'重新命名「' + tabRename.originalTitle + '」'"
+                  autocomplete="off"
+                  maxlength="200"
+                  @blur="commitTabRename"
+                  @keydown.enter.prevent="commitTabRename"
+                  @keydown.esc.prevent="cancelTabRename"
+                  @click.stop
+                />
                 <button
                   v-if="driveState.configured && driveState.signedIn"
                   type="button"
@@ -404,7 +420,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { usePainter } from './composables/usePainter.js'
 import { useGoogleDriveSync } from './composables/useGoogleDriveSync.js'
 
@@ -524,6 +540,64 @@ const {
   showToast,
 })
 
+const tabRenameInputRef = ref(null)
+const tabRename = reactive({
+  /** @type {number | null} */
+  index: null,
+  draft: '',
+  originalTitle: '',
+})
+
+function beginTabRename(i) {
+  const d = documents.value[i]
+  if (!d) return
+  tabRename.index = i
+  tabRename.originalTitle = d.title
+  tabRename.draft = d.title
+  nextTick(() => {
+    const el = tabRenameInputRef.value
+    if (el && typeof el.focus === 'function') {
+      el.focus()
+      el.select()
+    }
+  })
+}
+
+function cancelTabRename() {
+  tabRename.index = null
+  tabRename.draft = ''
+  tabRename.originalTitle = ''
+}
+
+function commitTabRename() {
+  const idx = tabRename.index
+  if (idx === null) return
+  const d = documents.value[idx]
+  if (!d) {
+    cancelTabRename()
+    return
+  }
+  const t = tabRename.draft.trim()
+  if (!t) {
+    showToast('分頁標題不可為空白')
+    tabRename.draft = tabRename.originalTitle
+    nextTick(() => {
+      const el = tabRenameInputRef.value
+      if (el && typeof el.focus === 'function') {
+        el.focus()
+        el.select()
+      }
+    })
+    return
+  }
+  d.title = t
+  d.updatedAt = Date.now()
+  tabRename.index = null
+  tabRename.draft = ''
+  tabRename.originalTitle = ''
+  flushLocalSessionNow()
+}
+
 const driveImportState = reactive({
   visible: false,
   loading: false,
@@ -569,6 +643,15 @@ watch(
   (signedIn, wasSignedIn) => {
     if (wasSignedIn === true && signedIn === false) {
       flushLocalSessionNow()
+    }
+  },
+)
+
+watch(
+  () => documents.value.length,
+  () => {
+    if (tabRename.index !== null && tabRename.index >= documents.value.length) {
+      cancelTabRename()
     }
   },
 )
