@@ -52,6 +52,12 @@ const TOOL_CURSOR = {
     5,
     11,
   ),
+  /** 框選畫布區域後浮起編輯（位移／縮放） */
+  imageSelect: svgCursor(
+    '<rect x="4.5" y="5.5" width="15" height="13" fill="none" stroke="#162032" stroke-width="1.75" stroke-dasharray="3.5 2.5"/><path fill="#ea580c" stroke="#162032" stroke-width="0.75" d="M4 5h4v4H4z"/>',
+    6,
+    7,
+  ),
 }
 
 /**

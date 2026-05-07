@@ -21,7 +21,4 @@ export default defineConfig(({ mode }) => ({
     outDir: 'docs',
     emptyOutDir: true,
   },
-  server: {
-    port: 8080,
-  },
 }))

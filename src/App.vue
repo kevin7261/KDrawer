@@ -60,6 +60,20 @@
           @click="copyCanvasPngDrawnBounds" aria-label="複製繪製範圍 PNG">
           <i class="fa-solid fa-crop-simple" aria-hidden="true"></i>
         </button>
+        <input
+          ref="importImageInputRef"
+          type="file"
+          class="d-none"
+          accept="image/*"
+          aria-hidden="true"
+          tabindex="-1"
+          @change="onImportImageFileChange"
+        />
+        <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny p-0"
+          title="匯入圖片到畫布中央；可拖曳、拉角縮放，Enter 確認、Esc 取消；亦可用剪貼簿貼上圖片"
+          @click="openImportImagePicker" aria-label="匯入圖片">
+          <i class="fa-regular fa-image" aria-hidden="true"></i>
+        </button>
         <button type="button" class="btn btn-sm btn-outline-light ctrl-action ctrl-action--accent btn-icon-tiny p-0"
           title="下載目前畫布為 PNG 檔"
           @click="savePng" aria-label="另存新檔">
@@ -441,6 +455,7 @@ const TOOLS = [
   { value: 'roundrect', label: '圓角矩形', icon: 'fa-solid fa-vector-square' },
   { value: 'fill', label: '填滿', icon: 'fa-solid fa-fill-drip' },
   { value: 'pick', label: '滴管', icon: 'fa-solid fa-eye-dropper' },
+  { value: 'imageSelect', label: '選取區', icon: 'fa-solid fa-object-group' },
   { value: 'eraser', label: '橡皮擦', icon: 'fa-solid fa-eraser' },
 ]
 
@@ -449,6 +464,17 @@ const canvasRef = ref(null)
 const canvasWrapRef = ref(null)
 const canvasPanLayerRef = ref(null)
 const appFooterRef = ref(null)
+const importImageInputRef = ref(null)
+
+function openImportImagePicker() {
+  importImageInputRef.value?.click()
+}
+
+function onImportImageFileChange(e) {
+  const input = e.target
+  if (input && input.files) void importImageFromFileList(input.files)
+  if (input) input.value = ''
+}
 
 // ── UI reactive state ──────────────────────────────────────────────────────
 const tool = ref('pencil')
@@ -518,6 +544,7 @@ const {
   handleCanvasSizeChange, zoomIn, zoomOut, zoomReset,
   getPayload, applyPayload, mergeRemoteDocFiles,
   flushLocalSessionNow,
+  importImageFromFileList,
 } = usePainter({
   canvasRef, canvasWrapRef, canvasPanLayerRef, appFooterRef,
   tool, brushSize, color1, color2, activeColorSlot,

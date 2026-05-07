@@ -26,6 +26,11 @@ export function usePainter({
   let lastY = 0
   /** @type {{ kind: string; x0: number; y0: number; img: ImageData; isRight: boolean } | null} */
   let dragShape = null
+  /** 匯入／貼上圖片：置中預覽，可拖曳與縮放後 Enter 確認 */
+  /** @type {{ img: HTMLImageElement; x: number; y: number; w: number; h: number; aspect: number; baseSnapshot: ImageData; precutSnapshot?: ImageData | null; source?: string } | null} */
+  let floatingPlacement = null
+  /** @type {{ pointerId: number; mode: 'move' | 'resize'; corner: string | null; startLX: number; startLY: number; origX: number; origY: number; origW: number; origH: number } | null} */
+  let placementDrag = null
   let panX = 0
   let panY = 0
   /** @type {{ pointerId: number; lastX: number; lastY: number } | null} */
@@ -34,6 +39,7 @@ export function usePainter({
   let viewportSyncRaf = null
   let zoomScale = 1
   let keydownHandler = null
+  let pasteHandler = null
 
   const DEFAULT_LOGICAL_W = 1280
   const DEFAULT_LOGICAL_H = 800
@@ -192,6 +198,7 @@ export function usePainter({
     endStroke()
     dragShape = null
     drawing = false
+    cancelFloatingPlacement()
 
     const c = canvas()
     const oldLw = logicalW.value
@@ -265,6 +272,358 @@ export function usePainter({
     restoreSnapshot(history.pop())
     markActiveDocPixelDirty()
     persistActiveDocument()
+  }
+
+  const PL_MIN_W = 8
+  const PL_HANDLE_R = 14
+  const SELECT_MIN_LOGICAL = 4
+
+  function cancelFloatingPlacement() {
+    if (!floatingPlacement || !ctx) {
+      floatingPlacement = null
+      placementDrag = null
+      return
+    }
+    const precut = floatingPlacement.precutSnapshot
+    if (precut) restoreSnapshot(precut)
+    else restoreSnapshot(floatingPlacement.baseSnapshot)
+    floatingPlacement = null
+    placementDrag = null
+    applyCanvasCursor()
+    persistActiveDocument()
+  }
+
+  function commitFloatingPlacement() {
+    if (!floatingPlacement || !ctx) return
+    const fp = floatingPlacement
+    restoreSnapshot(fp.baseSnapshot)
+    pushHistory()
+    ctx.drawImage(fp.img, fp.x, fp.y, fp.w, fp.h)
+    floatingPlacement = null
+    placementDrag = null
+    markActiveDocPixelDirty()
+    persistActiveDocument()
+    applyCanvasCursor()
+    showToast(fp.source === 'canvasSelect' ? '已套用選取區域' : '已將圖片貼入畫布')
+  }
+
+  function clampPlacementRect() {
+    if (!floatingPlacement) return
+    const lw = logicalW.value
+    const lh = logicalH.value
+    let { x, y, w, aspect } = floatingPlacement
+    w = Math.max(PL_MIN_W, w)
+    let h = w / aspect
+    if (h > lh) {
+      h = lh
+      w = h * aspect
+    }
+    if (w > lw) {
+      w = lw
+      h = w / aspect
+    }
+    x = Math.max(0, Math.min(x, lw - w))
+    y = Math.max(0, Math.min(y, lh - h))
+    floatingPlacement.x = x
+    floatingPlacement.y = y
+    floatingPlacement.w = w
+    floatingPlacement.h = h
+  }
+
+  function hitTestPlacementHandles(lx, ly) {
+    if (!floatingPlacement) return 'none'
+    const { x, y, w, h } = floatingPlacement
+    const corners = [
+      ['nw', x, y],
+      ['ne', x + w, y],
+      ['sw', x, y + h],
+      ['se', x + w, y + h],
+    ]
+    for (const [name, cx, cy] of corners) {
+      if (Math.hypot(lx - cx, ly - cy) <= PL_HANDLE_R) return name
+    }
+    if (lx >= x && lx <= x + w && ly >= y && ly <= y + h) return 'move'
+    return 'outside'
+  }
+
+  function drawPlacementChrome() {
+    if (!floatingPlacement || !ctx) return
+    const { x, y, w, h } = floatingPlacement
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.strokeStyle = 'rgba(37, 99, 235, 0.95)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.strokeRect(x, y, w, h)
+    ctx.setLineDash([])
+    const hs = 8
+    const corners = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]
+    ctx.fillStyle = '#f8fafc'
+    ctx.strokeStyle = '#2563eb'
+    for (const [cx, cy] of corners) {
+      ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs)
+      ctx.strokeRect(cx - hs / 2, cy - hs / 2, hs, hs)
+    }
+    ctx.restore()
+  }
+
+  function redrawPlacementOverlay() {
+    if (!floatingPlacement || !ctx) return
+    restoreSnapshot(floatingPlacement.baseSnapshot)
+    ctx.drawImage(floatingPlacement.img, floatingPlacement.x, floatingPlacement.y, floatingPlacement.w, floatingPlacement.h)
+    drawPlacementChrome()
+  }
+
+  function updatePlacementDrag(lx, ly) {
+    if (!floatingPlacement || !placementDrag) return
+    const fp = floatingPlacement
+    const d = placementDrag
+    if (d.mode === 'move') {
+      fp.x = d.origX + (lx - d.startLX)
+      fp.y = d.origY + (ly - d.startLY)
+      clampPlacementRect()
+      redrawPlacementOverlay()
+      return
+    }
+    const { corner, origX, origY, origW, origH } = d
+    const aspect = fp.aspect
+    if (corner === 'se') {
+      let w = Math.max(PL_MIN_W, lx - origX)
+      let h = w / aspect
+      if (origY + h > logicalH.value) {
+        h = logicalH.value - origY
+        w = h * aspect
+      }
+      fp.x = origX
+      fp.y = origY
+      fp.w = w
+      fp.h = h
+    } else if (corner === 'nw') {
+      let w = Math.max(PL_MIN_W, (origX + origW) - lx)
+      let h = w / aspect
+      fp.x = (origX + origW) - w
+      fp.y = (origY + origH) - h
+      fp.w = w
+      fp.h = h
+    } else if (corner === 'ne') {
+      let w = Math.max(PL_MIN_W, lx - origX)
+      let h = w / aspect
+      fp.x = origX
+      fp.y = (origY + origH) - h
+      fp.w = w
+      fp.h = h
+    } else if (corner === 'sw') {
+      let w = Math.max(PL_MIN_W, (origX + origW) - lx)
+      let h = w / aspect
+      fp.x = (origX + origW) - w
+      fp.y = origY
+      fp.w = w
+      fp.h = h
+    }
+    clampPlacementRect()
+    redrawPlacementOverlay()
+  }
+
+  function updatePlacementHoverCursor(lx, ly) {
+    const c = canvas()
+    if (!c || !floatingPlacement) return
+    const hit = hitTestPlacementHandles(lx, ly)
+    const map = {
+      nw: 'nw-resize',
+      ne: 'ne-resize',
+      sw: 'sw-resize',
+      se: 'nwse-resize',
+      move: 'move',
+      outside: 'default',
+      none: 'default',
+    }
+    c.style.cursor = map[hit] || 'default'
+  }
+
+  function startFloatingPlacementFromImage(img) {
+    const c = canvas()
+    if (!c || !ctx || !img.naturalWidth) return
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) return
+    const iw = img.naturalWidth
+    const ih = img.naturalHeight
+    if (iw < 1 || ih < 1) {
+      showToast('圖片尺寸無效')
+      return
+    }
+    if (floatingPlacement) cancelFloatingPlacement()
+    const lw = logicalW.value
+    const lh = logicalH.value
+    const maxW = lw * 0.92
+    const maxH = lh * 0.92
+    const scale = Math.min(1, maxW / iw, maxH / ih)
+    const w = iw * scale
+    const h = ih * scale
+    const aspect = iw / ih
+    floatingPlacement = {
+      img,
+      x: (lw - w) / 2,
+      y: (lh - h) / 2,
+      w,
+      h,
+      aspect,
+      baseSnapshot: cloneImageData(ctx.getImageData(0, 0, c.width, c.height)),
+      precutSnapshot: null,
+      source: 'import',
+    }
+    placementDrag = null
+    clampPlacementRect()
+    redrawPlacementOverlay()
+    applyCanvasCursor()
+  }
+
+  function logicalRectToDevicePixels(nx, ny, nw, nh) {
+    const c = canvas()
+    if (!c) return null
+    const lw = logicalW.value
+    const lh = logicalH.value
+    const sx = Math.max(0, Math.min(c.width - 1, Math.floor((nx / lw) * c.width)))
+    const sy = Math.max(0, Math.min(c.height - 1, Math.floor((ny / lh) * c.height)))
+    const ex = Math.max(sx + 1, Math.min(c.width, Math.ceil(((nx + nw) / lw) * c.width)))
+    const ey = Math.max(sy + 1, Math.min(c.height, Math.ceil(((ny + nh) / lh) * c.height)))
+    return { sx, sy, sw: ex - sx, sh: ey - sy }
+  }
+
+  async function finalizeImageSelectRect(nx, ny, nw, nh) {
+    if (nw < SELECT_MIN_LOGICAL || nh < SELECT_MIN_LOGICAL) {
+      showToast('選取範圍太小')
+      return false
+    }
+    const c = canvas()
+    if (!c || !ctx) return false
+    const dev = logicalRectToDevicePixels(nx, ny, nw, nh)
+    if (!dev || dev.sw < 1 || dev.sh < 1) {
+      showToast('選取範圍太小')
+      return false
+    }
+    let slice
+    try {
+      slice = ctx.getImageData(dev.sx, dev.sy, dev.sw, dev.sh)
+    } catch (_) {
+      showToast('無法讀取選取區域')
+      return false
+    }
+
+    const precut = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
+
+    const tmp = document.createElement('canvas')
+    tmp.width = dev.sw
+    tmp.height = dev.sh
+    const tctx = tmp.getContext('2d')
+    if (!tctx) return false
+    tctx.putImageData(slice, 0, 0)
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(nx, ny, nw, nh)
+    ctx.restore()
+
+    const baseAfterCut = cloneImageData(ctx.getImageData(0, 0, c.width, c.height))
+
+    const img = new Image()
+    let dataUrl
+    try {
+      dataUrl = tmp.toDataURL('image/png')
+    } catch (_) {
+      restoreSnapshot(precut)
+      showToast('無法輸出選取區域')
+      return false
+    }
+
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('img'))
+        img.src = dataUrl
+      })
+    } catch (_) {
+      restoreSnapshot(precut)
+      showToast('無法建立選取預覽')
+      return false
+    }
+
+    if (!img.naturalWidth || !img.naturalHeight) {
+      restoreSnapshot(precut)
+      return false
+    }
+
+    floatingPlacement = {
+      img,
+      x: nx,
+      y: ny,
+      w: nw,
+      h: nh,
+      aspect: img.naturalWidth / img.naturalHeight,
+      baseSnapshot: baseAfterCut,
+      precutSnapshot: precut,
+      source: 'canvasSelect',
+    }
+    placementDrag = null
+    clampPlacementRect()
+    redrawPlacementOverlay()
+    applyCanvasCursor()
+    showToast('拖曳調整位置與大小；Enter 確認，Esc 取消')
+    return true
+  }
+
+  async function importImageFromFileList(files) {
+    const file = files && files[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      showToast('請選擇圖片檔（PNG、JPEG 等）')
+      return
+    }
+    if (!documents.value.length || !documents.value[activeDocIndex.value]) {
+      showToast('請先建立分頁')
+      return
+    }
+    const url = URL.createObjectURL(file)
+    try {
+      const img = new Image()
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('load'))
+        img.src = url
+      })
+      startFloatingPlacementFromImage(img)
+      showToast('拖曳調整位置與大小；Enter 確認，Esc 取消')
+    } catch (_) {
+      showToast('無法載入圖片')
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  async function tryPasteImageFromClipboardData(clipboardData) {
+    if (!clipboardData || !clipboardData.items) return false
+    for (let i = 0; i < clipboardData.items.length; i++) {
+      const it = clipboardData.items[i]
+      if (!it.type || !it.type.startsWith('image/')) continue
+      const blob = it.getAsFile()
+      if (!blob) continue
+      const url = URL.createObjectURL(blob)
+      try {
+        const img = new Image()
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve()
+          img.onerror = () => reject(new Error('load'))
+          img.src = url
+        })
+        startFloatingPlacementFromImage(img)
+        showToast('已貼上圖片；Enter 確認，Esc 取消')
+      } catch (_) {
+        showToast('無法載入剪貼簿圖片')
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+      return true
+    }
+    return false
   }
 
   // ── Document management ───────────────────────────────────────────────────
@@ -530,6 +889,7 @@ export function usePainter({
   function loadDocumentAt(index) {
     const d = documents.value[index]
     if (!d) return
+    cancelFloatingPlacement()
     panX = 0; panY = 0; panDrag = null
     const wrap = canvasWrap()
     if (wrap) wrap.classList.remove('canvas-wrap--panning')
@@ -596,6 +956,7 @@ export function usePainter({
 
   async function applyCanvasSizeFromUserSelect() {
     if (documents.value.length === 0) {
+      cancelFloatingPlacement()
       endStroke(); dragShape = null; drawing = false
       loadEmptyCanvasState()
       applyCanvasDisplaySize()
@@ -609,6 +970,7 @@ export function usePainter({
       if (documentUsesViewport(d)) { syncCanvasSizeSelect(); return }
       const ok = await showConfirm('改為「跟隨視窗」後，畫布會隨瀏覽器／視窗調整；版面變小時僅保留左上角內容。確定嗎？')
       if (!ok) { syncCanvasSizeSelect(); return }
+      cancelFloatingPlacement()
       endStroke(); dragShape = null; drawing = false
       d.useViewportSize = true
       resizeActiveLogicalToAvail({ preserveDrawing: true })
@@ -624,6 +986,7 @@ export function usePainter({
     const ok2 = await showConfirm('改變畫布大小會清除此分頁內容並重設復原紀錄，確定嗎？')
     if (!ok2) { syncCanvasSizeSelect(); return }
 
+    cancelFloatingPlacement()
     endStroke(); dragShape = null; drawing = false
     dFixed.useViewportSize = false
     dFixed.logicalW = parsed.w; dFixed.logicalH = parsed.h
@@ -639,6 +1002,7 @@ export function usePainter({
 
   function switchToDocument(nextIndex) {
     if (nextIndex < 0 || nextIndex >= documents.value.length || nextIndex === activeDocIndex.value) return
+    cancelFloatingPlacement()
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
     activeDocIndex.value = nextIndex
@@ -647,6 +1011,7 @@ export function usePainter({
   }
 
   function addDocument() {
+    cancelFloatingPlacement()
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
     const vp = canvasSizePresetValue.value === CANVAS_VIEWPORT_OPTION
@@ -683,6 +1048,7 @@ export function usePainter({
 
   function closeDocumentAt(closeIdx) {
     if (closeIdx < 0 || closeIdx >= documents.value.length) return
+    cancelFloatingPlacement()
     endStroke(); dragShape = null; drawing = false
     persistActiveDocument()
     const closedId = documents.value[closeIdx]?.id
@@ -752,6 +1118,10 @@ export function usePainter({
     const c = canvas()
     if (!c) return
     if (!documents.value.length || !documents.value[activeDocIndex.value]) {
+      c.style.cursor = 'default'
+      return
+    }
+    if (floatingPlacement) {
       c.style.cursor = 'default'
       return
     }
@@ -830,6 +1200,13 @@ export function usePainter({
     } else if (dragShape.kind === 'roundrect') {
       if (nw < 1 && nh < 1) { ctx.restore(); return }
       strokeRoundRect(nx, ny, Math.max(nw, 0.5), Math.max(nh, 0.5), Math.min(12, nw / 4, nh / 4, 8))
+    } else if (dragShape.kind === 'imageSelect') {
+      if (nw < 1 && nh < 1) { ctx.restore(); return }
+      ctx.strokeStyle = 'rgba(234, 88, 12, 0.95)'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 4])
+      ctx.strokeRect(nx, ny, Math.max(nw, 0.5), Math.max(nh, 0.5))
+      ctx.setLineDash([])
     }
     ctx.restore()
     lastX = x1; lastY = y1
@@ -846,6 +1223,16 @@ export function usePainter({
     if (tool.value === 'fill') {
       pushHistory()
       floodFill(x, y, getStrokeColor(isRightButton))
+      return
+    }
+    if (tool.value === 'imageSelect') {
+      cancelFloatingPlacement()
+      pushHistory()
+      const c = canvas()
+      dragShape = { kind: 'imageSelect', x0: x, y0: y, img: ctx.getImageData(0, 0, c.width, c.height), isRight: isRightButton }
+      drawing = true
+      lastX = x
+      lastY = y
       return
     }
     if (['line', 'rect', 'ellipse', 'roundrect'].includes(tool.value)) {
@@ -923,6 +1310,7 @@ export function usePainter({
   // ── Public actions ────────────────────────────────────────────────────────
   function clearCanvas() {
     if (!documents.value.length || !documents.value[activeDocIndex.value]) return
+    cancelFloatingPlacement()
     pushHistory()
     const c = canvas()
     if (!ctx || !c) return
@@ -1052,12 +1440,50 @@ export function usePainter({
           e.preventDefault()
           return
         }
-        c.setPointerCapture(e.pointerId)
         const { x, y } = clientToCanvas(e.clientX, e.clientY)
+        if (floatingPlacement) {
+          const hit = hitTestPlacementHandles(x, y)
+          if (hit === 'outside') {
+            cancelFloatingPlacement()
+            e.preventDefault()
+            return
+          }
+          if (hit !== 'none') {
+            const fp = floatingPlacement
+            c.setPointerCapture(e.pointerId)
+            placementDrag = {
+              pointerId: e.pointerId,
+              mode: hit === 'move' ? 'move' : 'resize',
+              corner: hit === 'move' ? null : hit,
+              startLX: x,
+              startLY: y,
+              origX: fp.x,
+              origY: fp.y,
+              origW: fp.w,
+              origH: fp.h,
+            }
+            e.preventDefault()
+            return
+          }
+        }
+        c.setPointerCapture(e.pointerId)
         beginStroke(x, y, e.pointerType === 'mouse' && e.button === 2)
         e.preventDefault()
       })
       c.addEventListener('pointermove', e => {
+        if (placementDrag && e.pointerId === placementDrag.pointerId) {
+          const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e]
+          for (const ev of list) {
+            const { x: lx, y: ly } = clientToCanvas(ev.clientX, ev.clientY)
+            updatePlacementDrag(lx, ly)
+          }
+          e.preventDefault()
+          return
+        }
+        if (floatingPlacement) {
+          const { x: lx, y: ly } = clientToCanvas(e.clientX, e.clientY)
+          updatePlacementHoverCursor(lx, ly)
+        }
         if (!drawing) return
         const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e]
         for (const ev of list) {
@@ -1067,9 +1493,41 @@ export function usePainter({
         e.preventDefault()
       })
       const onPointerUp = e => {
+        if (placementDrag && e.pointerId === placementDrag.pointerId) {
+          placementDrag = null
+          try { c.releasePointerCapture(e.pointerId) } catch (_) {}
+          redrawPlacementOverlay()
+          return
+        }
+
+        let finalizeSelect = null
+        if (drawing && dragShape && dragShape.kind === 'imageSelect') {
+          const { x0, y0 } = dragShape
+          const x1 = lastX
+          const y1 = lastY
+          const nx = Math.min(x0, x1)
+          const ny = Math.min(y0, y1)
+          const nw = Math.abs(x1 - x0)
+          const nh = Math.abs(y1 - y0)
+          finalizeSelect = { snap: dragShape.img, nx, ny, nw, nh }
+        }
+
         const drewOverlay = !!(dragShape || drawing)
         try { c.releasePointerCapture(e.pointerId) } catch (_) {}
         endStroke()
+
+        if (finalizeSelect) {
+          restoreSnapshot(finalizeSelect.snap)
+          void (async () => {
+            const ok = await finalizeImageSelectRect(finalizeSelect.nx, finalizeSelect.ny, finalizeSelect.nw, finalizeSelect.nh)
+            if (ok) {
+              markActiveDocPixelDirty()
+              persistActiveDocument()
+            }
+          })()
+          return
+        }
+
         if (drewOverlay) markActiveDocPixelDirty()
         persistActiveDocument()
       }
@@ -1149,7 +1607,24 @@ export function usePainter({
       keydownHandler = e => {
         const tag = e.target && e.target.tagName
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION') return
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
+        if (floatingPlacement && e.key === 'Escape') {
+          e.preventDefault()
+          cancelFloatingPlacement()
+          return
+        }
+        if (floatingPlacement && e.key === 'Enter') {
+          e.preventDefault()
+          commitFloatingPlacement()
+          return
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+          e.preventDefault()
+          if (floatingPlacement) {
+            cancelFloatingPlacement()
+            return
+          }
+          undo()
+        }
         if ((e.ctrlKey || e.metaKey) && (e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); applyZoomScaleInternal(1) }
         if (e.ctrlKey || e.metaKey) {
           if (e.code === 'Equal' || e.code === 'NumpadAdd') { e.preventDefault(); applyZoomScaleInternal(zoomScale * ZOOM_BTN_FACTOR) }
@@ -1157,6 +1632,22 @@ export function usePainter({
         }
       }
       document.addEventListener('keydown', keydownHandler)
+
+      pasteHandler = e => {
+        const t = e.target
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+        if (!documents.value.length || !documents.value[activeDocIndex.value]) return
+        const items = e.clipboardData && e.clipboardData.items
+        if (!items) return
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type && items[i].type.startsWith('image/')) {
+            e.preventDefault()
+            void tryPasteImageFromClipboardData(e.clipboardData)
+            return
+          }
+        }
+      }
+      document.addEventListener('paste', pasteHandler)
 
       window.addEventListener('resize', scheduleViewportLogicalSync)
       document.addEventListener('visibilitychange', onSessionVisibilityChange)
@@ -1172,6 +1663,7 @@ export function usePainter({
     window.removeEventListener('pagehide', flushSessionPersistenceSync)
     window.removeEventListener('resize', scheduleViewportLogicalSync)
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler)
+    if (pasteHandler) document.removeEventListener('paste', pasteHandler)
     if (viewportSyncRaf !== null) cancelAnimationFrame(viewportSyncRaf)
   })
 
@@ -1188,6 +1680,7 @@ export function usePainter({
     if (!payload || payload.v !== 1 || !Array.isArray(payload.documents)) return
     if (payload.documents.length === 0) {
       try {
+        cancelFloatingPlacement()
         endStroke(); dragShape = null; drawing = false
         documents.value = []
         activeDocIndex.value = 0
@@ -1222,6 +1715,7 @@ export function usePainter({
           pixelDirty: false,
         })
       }
+      cancelFloatingPlacement()
       endStroke(); dragShape = null; drawing = false
       documents.value = restored
       activeDocIndex.value = activeIdx
@@ -1305,6 +1799,7 @@ export function usePainter({
     }
 
     try {
+      cancelFloatingPlacement()
       endStroke(); dragShape = null; drawing = false
       documents.value = processed
       const wantId = typeof opts.activateDocId === 'string' ? opts.activateDocId : ''
@@ -1339,5 +1834,6 @@ export function usePainter({
     getPayload, applyPayload, mergeRemoteDocFiles, onLocalChange,
     clearPersistedSession,
     flushLocalSessionNow: flushSessionPersistenceSync,
+    importImageFromFileList,
   }
 }
